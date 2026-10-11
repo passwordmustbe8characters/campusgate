@@ -53,6 +53,16 @@ npm run dev                        # restarts on file changes
 | `npm run loadtest` | Phase 8, not implemented yet |
 | `npm run calibrate` | Phase 8, not implemented yet |
 
+## Changing dependencies
+
+The Dockerfile uses `npm ci`, which needs `package-lock.json` to match the image's npm exactly. After editing dependencies in `package.json`, regenerate the lock file inside the image rather than with your local npm:
+
+```bash
+docker run --rm -v "$PWD:/src" node:24-slim sh -c \
+  'mkdir /w && cp /src/package.json /w/ && cd /w && npm install --package-lock-only --no-audit --no-fund && cp package-lock.json /src/package-lock.json'
+npm ci        # then sync your local node_modules
+```
+
 ## Configuration
 
 All settings come from environment variables (see [.env.example](.env.example)). The app refuses to start and lists every problem if a required variable is missing or invalid. Secrets live only in `.env`, which is git-ignored.

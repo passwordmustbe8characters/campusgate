@@ -6,7 +6,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 
 | Phase | Name | Status |
 |---|---|---|
-| 0 | Scaffold | Done (Docker check pending, see below) |
+| 0 | Scaffold | Done (Docker verified 2026-10-11) |
 | 1 | Core authentication | Not started |
 | 2 | Second factors and recovery | Not started |
 | 3 | Authorization and audit logs | Not started |
@@ -58,7 +58,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 - **`UV_THREADPOOL_SIZE`** is configurable through `.env` and logged at startup. It has to be set in the environment before Node starts; it cannot be changed from code later.
 - Log redaction does not hide a generic `code` field, because that would hide error codes like `ECONNREFUSED`. Fields carrying OTPs must be named `otp`, `otpCode`, or `totpCode` (all redacted).
 
-### Tests (run 2026-10-11, all passing: 4 suites, 20 tests)
+### Tests (run 2026-10-11, all passing: 4 suites, 20 tests; rerun after the lock-file fix, still 20/20)
 - `tests/config.test.js`: defaults, required variables, invalid values rejected, `UV_THREADPOOL_SIZE` read.
 - `tests/health.test.js`: 200 when healthy; 503 when PostgreSQL or Redis is down; a hanging dependency times out; error text is not leaked.
 - `tests/errors.test.js`: JSON 404, generic 400 for malformed JSON, generic 500 with no stack trace; helmet headers present.
@@ -67,8 +67,68 @@ Plain record of what has been built, which requirements it covers, decisions mad
 The tests use in-memory fakes for PostgreSQL and Redis, so they need no running database.
 
 ### Verified vs. not yet verified
-- **Verified:** test suite passes. The real server starts and `/health` returned **503** with PostgreSQL and Redis absent, as intended. `npm run migrate` loads its config and tries to connect.
-- **Not yet verified:** `docker compose up` and a **200** from `/health`. Docker Desktop is not installed on the development machine, so the "done when" check for Phase 0 is still open. To verify: install Docker Desktop, then `cp .env.example .env`, edit passwords, `docker compose up --build`, and `curl http://localhost:3000/health`.
+- **First pass (no Docker on the machine):** test suite passed. The real server started and `/health` returned **503** with PostgreSQL and Redis absent, as intended.
+- **Docker verification (2026-10-11), after the lock-file fix below:** see "Docker verification" for the exact commands and output. Phase 0's "done when" check is met.
+
+### Fix: package-lock.json out of sync with the Docker image
+**Problem.** `docker compose up --build` failed at `npm ci` in the Dockerfile:
+```
+npm error `npm ci` can only install packages when your package.json and package-lock.json ... are in sync.
+npm error Missing: @emnapi/core@1.11.3 from lock file
+npm error Missing: @emnapi/runtime@1.11.3 from lock file
+npm error Invalid: lock file's @emnapi/wasi-threads@1.2.1 does not satisfy @emnapi/wasi-threads@1.2.3
+npm error Missing: @emnapi/core@1.10.0 from lock file
+npm error Missing: @emnapi/runtime@1.10.0 from lock file
+npm error Missing: @emnapi/wasi-threads@1.2.1 from lock file
+```
+**Cause.** The lock file was generated on Windows with npm 11.6.2. The `@emnapi/*` packages are optional, platform-specific dependencies pulled in by jest (via `unrs-resolver`). The Windows install left them out, but the image's npm (11.19.0, on Linux) expects them in the lock file.
+
+**Fix.** Regenerated the lock file inside the same image the Dockerfile uses (`node:24-slim` = **Node v24.21.0, npm 11.19.0**). The Dockerfile still uses `npm ci`.
+```bash
+docker run --rm node:24-slim sh -c 'node --version && npm --version'    # v24.21.0 / 11.19.0
+# regenerate from package.json only, in a scratch dir inside the container, copy the lock back:
+docker run --rm -v "<repo>:/src" node:24-slim sh -c \
+  'mkdir /w && cp /src/package.json /w/ && cd /w && npm install --package-lock-only --no-audit --no-fund && cp package-lock.json /src/package-lock.json'
+```
+**Checked afterwards:**
+- `npm ci --omit=dev` (what the Dockerfile runs) in `node:24-slim`: added 122 packages, no errors.
+- Full `npm ci` in `node:24-slim`: added 434 packages, no errors.
+- Host `npm ci` on Windows (npm 11.6.2) with the new lock: added 434 packages and did not rewrite the lock file. `npm test`: 4 suites, 20 tests passed.
+- Direct dependency versions unchanged, except **ioredis 5.9.3 -> 5.11.1** (still inside `^5.9.3` and still the 5.x line, so the RESP2 reasoning above holds).
+- `@emnapi/*`, `unrs-resolver`, and `@parcel/watcher` are marked dev-only in the lock file, so they are not in the production image.
+
+**Rule from now on:** when dependencies change, regenerate `package-lock.json` inside `node:24-slim` (command above), not with the host's npm, so it stays in sync with the image.
+
+### Docker verification (2026-10-11)
+Docker 29.8.2, Docker Compose v5.5.1.
+```bash
+docker compose up --build -d
+```
+Image built (including `npm ci --omit=dev`); postgres and redis became healthy, then the app started. Migrations ran ("Already up to date": no migrations exist yet).
+
+```
+$ docker compose ps
+NAME                     IMAGE                STATUS
+auth-system-app-1        auth-system-app      Up 37 seconds (healthy)       0.0.0.0:3000->3000/tcp
+auth-system-postgres-1   postgres:17-alpine   Up About a minute (healthy)   127.0.0.1:5432->5432/tcp
+auth-system-redis-1      redis:8-alpine       Up About a minute (healthy)   127.0.0.1:6379->6379/tcp
+
+$ curl -i http://localhost:3000/health
+HTTP/1.1 200 OK
+{"status":"ok","uptime_s":33,"checks":{"postgres":{"status":"ok","latency_ms":7.498338},"redis":{"status":"ok","latency_ms":6.156361}}}
+```
+Failure path, checked live:
+```
+$ docker compose stop redis && curl http://localhost:3000/health
+HTTP 503  {"status":"degraded",...,"checks":{"postgres":{"status":"ok",...},"redis":{"status":"error"}}}
+$ docker compose start redis && curl http://localhost:3000/health
+HTTP 200  {"status":"ok",...}
+```
+The app logged one `redis connection error` and one `redis reconnected` (no log flood while Redis was down).
+
+**Observations (not changed):**
+- The container reports `nodeEnv: "development"` because `.env` sets `NODE_ENV=development`, and `env_file` overrides the Dockerfile's `NODE_ENV=production`. That is fine for local development; set `NODE_ENV=production` in `.env` for a production-like run.
+- `npx knex` at container start prints an "npm update available" notice. It is harmless log noise.
 
 ### Commands
 ```bash
