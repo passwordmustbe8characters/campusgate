@@ -11,23 +11,48 @@
   "scripts": {
     "dev": "nodemon --watch app app/src/server.js",
     "start": "node app/src/server.js",
-    "test": "jest",
+    "test": "npm run test:unit && npm run test:integration",
+    "test:unit": "jest --selectProjects unit",
+    "test:integration": "jest --selectProjects integration --runInBand",
     "migrate": "knex migrate:latest --knexfile knexfile.js",
     "migrate:make": "knex migrate:make --knexfile knexfile.js",
     "migrate:rollback": "knex migrate:rollback --knexfile knexfile.js",
     "seed": "knex seed:run --knexfile knexfile.js",
+    "admin": "node scripts/admin-cli.js",
+    "bench:bcrypt": "node scripts/bcrypt-bench.js",
     "loadtest": "node scripts/not-yet.js loadtest 8",
     "calibrate": "node scripts/not-yet.js calibrate 8"
   },
   "jest": {
-    "testEnvironment": "node",
-    "roots": [
-      "<rootDir>/tests"
+    "projects": [
+      {
+        "displayName": "unit",
+        "testEnvironment": "node",
+        "roots": [
+          "<rootDir>/tests/unit"
+        ]
+      },
+      {
+        "displayName": "integration",
+        "testEnvironment": "node",
+        "roots": [
+          "<rootDir>/tests/integration"
+        ],
+        "globalSetup": "<rootDir>/tests/integration/globalSetup.js",
+        "setupFilesAfterEnv": [
+          "<rootDir>/tests/integration/setup.js"
+        ]
+      }
     ]
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "csrf-csrf": "^4.0.3",
     "dotenv": "^18.0.7",
+    "ejs": "^6.0.1",
     "express": "^5.3.0",
+    "express-validator": "^7.3.2",
     "helmet": "^8.3.0",
     "ioredis": "^5.9.3",
     "knex": "^3.3.0",

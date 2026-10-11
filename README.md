@@ -18,6 +18,14 @@ docker compose up --build
 
 This starts PostgreSQL, Redis, and the app; the app runs pending migrations and then listens on port 3000.
 
+Load the demo data (2,000 fake student records, 1,500 of them with accounts, plus `STAFF0001` and `ADMIN0001`). The first run takes about 80 s because every account is hashed at the real bcrypt cost:
+
+```bash
+docker compose exec app npm run seed
+```
+
+Then open http://localhost:3000/login (or `/register` for a free record such as `SCI/2025/0061`). Seeded passwords are the `SEED_*_PASSWORD` values in your `.env`.
+
 Check it is up:
 
 ```bash
@@ -47,19 +55,23 @@ npm run dev                        # restarts on file changes
 |---|---|
 | `npm run dev` | Start with auto-reload (nodemon) |
 | `npm start` | Start the server |
-| `npm test` | Run the jest + supertest suite (no database needed for Phase 0 tests) |
+| `npm test` | Unit tests, then integration tests (integration needs `docker compose up -d postgres redis`) |
+| `npm run test:unit` | Unit tests only, with stand-ins; no services needed |
+| `npm run test:integration` | Integration tests against the real PostgreSQL and Redis. Uses a separate `<db>_test` database (recreated each run) and Redis DB 15, so dev data is untouched. Fails, never skips, if the services are down |
 | `npm run migrate` | Apply database migrations (knex) |
-| `npm run seed` | Run seed files (student records arrive in Phase 1) |
+| `npm run seed` | Seed student records and accounts (counts from `SEED_REGISTERED_STUDENTS` / `SEED_FREE_STUDENTS`). Safe to re-run |
+| `npm run admin -- unlock <ID or email>` | Unlock a locked account (also `status <ID or email>` and `locked`) |
+| `npm run bench:bcrypt [samples]` | Time bcrypt at costs 10, 11, 12 (run it in the container: `docker compose run --rm --no-deps app node scripts/bcrypt-bench.js 30`) |
 | `npm run loadtest` | Phase 8, not implemented yet |
 | `npm run calibrate` | Phase 8, not implemented yet |
 
 ## Changing dependencies
 
-The Dockerfile uses `npm ci`, which needs `package-lock.json` to match the image's npm exactly. After editing dependencies in `package.json`, regenerate the lock file inside the image rather than with your local npm:
+The Dockerfile uses `npm ci`, which needs `package-lock.json` to match the image's npm exactly. After editing dependencies in `package.json`, update the lock file inside the image rather than with your local npm (copying the existing lock keeps unrelated versions unchanged):
 
 ```bash
 docker run --rm -v "$PWD:/src" node:24-slim sh -c \
-  'mkdir /w && cp /src/package.json /w/ && cd /w && npm install --package-lock-only --no-audit --no-fund && cp package-lock.json /src/package-lock.json'
+  'mkdir /w && cp /src/package.json /src/package-lock.json /w/ && cd /w && npm install --package-lock-only --no-audit --no-fund && cp package-lock.json /src/package-lock.json'
 npm ci        # then sync your local node_modules
 ```
 
@@ -72,9 +84,11 @@ All settings come from environment variables (see [.env.example](.env.example)).
 ## Repository layout
 
 ```
-app/src/   config, logger, app factory, server, routes/, middleware/, db/ (more folders added per phase)
-db/        migrations/ seed/
-tests/     jest + supertest
+app/src/   config, logger, app factory, server, routes/, controllers/, services/, middleware/, policies/, db/
+app/views/ EJS pages     app/public/  CSS + JS
+db/        migrations/ seed/ (seed/lib: data generator and seeding logic)
+scripts/   admin CLI, bcrypt benchmark
+tests/     unit/ (stand-ins) and integration/ (real PostgreSQL + Redis)
 docs/      SPEC.md, PROGRESS.md
 sim/       OMNeT++ project (maintained by the developer)
 ```

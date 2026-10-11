@@ -11,7 +11,9 @@ function errorHandler(logger) {
   // eslint-disable-next-line no-unused-vars
   return (err, req, res, next) => {
     const raw = err.status || err.statusCode;
-    const status = Number.isInteger(raw) && raw >= 400 && raw < 600 ? raw : 500;
+    let status = Number.isInteger(raw) && raw >= 400 && raw < 600 ? raw : 500;
+    // No free DB connection in time: the system is overloaded, not broken.
+    if (err.name === 'KnexTimeoutError') status = 503;
     const log = req.log || logger;
 
     if (status >= 500) log.error({ err }, 'unhandled error');

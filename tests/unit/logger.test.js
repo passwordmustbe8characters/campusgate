@@ -1,7 +1,7 @@
 'use strict';
 
 const { Writable } = require('node:stream');
-const { createLogger } = require('../app/src/logger');
+const { createLogger } = require('../../app/src/logger');
 
 function captureLogger() {
   const lines = [];

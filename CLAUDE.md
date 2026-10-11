@@ -57,7 +57,7 @@ Mark tasks done in `docs/PROGRESS.md`. Each phase ends with passing tests and a 
 - Docker Compose (app, PostgreSQL, Redis), config loader, health endpoint `/health`, logging, error handler, migrations setup, README with run instructions.
 - **Done when:** `docker compose up` starts everything and `/health` returns OK.
 
-### Phase 1: Core authentication (FR-A1, A3 to A6, A9 partly)
+### Phase 1: Core authentication (FR-A1, A3 to A6)
 - Schema: users, roles, student_records, policies. Seed roles and ~2,000 fake students.
 - Register (validated against `student_records`), login with generic errors, bcrypt, password policy and blocklist, temporary lockout and admin unlock, basic UI pages.
 - **Done when:** register, login, 5 failures lock, unlock works, all with tests.

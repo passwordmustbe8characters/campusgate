@@ -2,8 +2,8 @@
 
 const express = require('express');
 const request = require('supertest');
-const { createLogger } = require('../app/src/logger');
-const { errorHandler } = require('../app/src/middleware/errorHandler');
+const { createLogger } = require('../../app/src/logger');
+const { errorHandler } = require('../../app/src/middleware/errorHandler');
 const { buildTestApp } = require('./helpers');
 
 describe('error handling (NFR-8)', () => {
@@ -34,6 +34,20 @@ describe('error handling (NFR-8)', () => {
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Internal Server Error');
     expect(res.text).not.toMatch(/password_hash|exploded|at .*\.js/);
+  });
+});
+
+describe('overload errors', () => {
+  test('a DB pool timeout (KnexTimeoutError) returns 503, not 500', async () => {
+    const app = express();
+    app.get('/slow', async () => {
+      throw Object.assign(new Error('Knex: Timeout acquiring a connection'), { name: 'KnexTimeoutError' });
+    });
+    app.use(errorHandler(createLogger({ level: 'silent' })));
+
+    const res = await request(app).get('/slow');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('Service Unavailable');
   });
 });
 

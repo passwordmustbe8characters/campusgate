@@ -1,0 +1,19 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Sign in</h1>
+    <% if (registered) { %>
+      <p class="msg msg-ok">Account created. You can now sign in.</p>
+    <% } %>
+    <form data-api="/auth/login" novalidate>
+      <label for="identifier">Matric/staff ID or email</label>
+      <input id="identifier" name="identifier" autocomplete="username" required maxlength="254">
+      <p class="field-error" data-error-for="identifier"></p>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <p class="field-error" data-error-for="password"></p>
+
+      <button type="submit">Sign in</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <p class="alt">New student? <a href="/register">Create an account</a></p>
+<%- include('partials/bottom') %>

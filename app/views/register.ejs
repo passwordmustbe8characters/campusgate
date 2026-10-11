@@ -1,0 +1,36 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Create account</h1>
+    <p class="hint">For registered students. Use the matric number on your school records.</p>
+    <form data-api="/auth/register" data-redirect="/login?registered=1" novalidate>
+      <label for="matricNo">Matric number</label>
+      <input id="matricNo" name="matricNo" autocomplete="username" required maxlength="32" placeholder="SCI/2022/0001">
+      <p class="field-error" data-error-for="matricNo"></p>
+
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" required maxlength="254">
+      <p class="field-error" data-error-for="email"></p>
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" required>
+      <ul class="rules">
+        <% passwordRules.forEach(function (rule) { %><li><%= rule %></li><% }) %>
+      </ul>
+      <p class="field-error" data-error-for="password"></p>
+
+      <!-- TODO(Phase 9): check final wording against the Nigeria Data Protection Act 2023 (NFR-5). -->
+      <div class="notice">
+        <strong>Privacy notice.</strong> We store your matric number, email address, and a one-way hash of
+        your password (never the password itself) to give you access to university services. We also record
+        sign-in events (time, IP address, device type) to keep accounts secure.
+      </div>
+      <label class="check">
+        <input type="checkbox" name="consent" value="true" required>
+        I have read the privacy notice.
+      </label>
+      <p class="field-error" data-error-for="consent"></p>
+
+      <button type="submit">Create account</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <p class="alt">Already registered? <a href="/login">Sign in</a></p>
+<%- include('partials/bottom') %>

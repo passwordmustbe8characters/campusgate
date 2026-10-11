@@ -9,6 +9,7 @@ RUN npm ci --omit=dev && npm cache clean --force
 
 COPY app ./app
 COPY db ./db
+COPY scripts ./scripts
 COPY knexfile.js ./
 
 USER node
