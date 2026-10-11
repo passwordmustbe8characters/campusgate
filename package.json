@@ -1,0 +1,43 @@
+{
+  "name": "campusgate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Centralized AAA (Authentication, Authorization, Accounting) system for a university network, built for peak-load access.",
+  "type": "commonjs",
+  "main": "app/src/server.js",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "nodemon --watch app app/src/server.js",
+    "start": "node app/src/server.js",
+    "test": "jest",
+    "migrate": "knex migrate:latest --knexfile knexfile.js",
+    "migrate:make": "knex migrate:make --knexfile knexfile.js",
+    "migrate:rollback": "knex migrate:rollback --knexfile knexfile.js",
+    "seed": "knex seed:run --knexfile knexfile.js",
+    "loadtest": "node scripts/not-yet.js loadtest 8",
+    "calibrate": "node scripts/not-yet.js calibrate 8"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "roots": [
+      "<rootDir>/tests"
+    ]
+  },
+  "dependencies": {
+    "dotenv": "^18.0.7",
+    "express": "^5.3.0",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.9.3",
+    "knex": "^3.3.0",
+    "pg": "^8.23.1",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0"
+  },
+  "devDependencies": {
+    "jest": "^30.5.2",
+    "nodemon": "^3.1.14",
+    "supertest": "^7.3.1"
+  }
+}
