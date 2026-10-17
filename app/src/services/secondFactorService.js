@@ -4,6 +4,7 @@ const { getPolicy } = require('../policies/policyRepo');
 const { recordFailure, completeLogin, loadAccount, logFailure } = require('./accountState');
 const { CooldownError } = require('./otpService');
 const { DeliveryError } = require('./delivery');
+const { safeError } = require('./metrics');
 
 const LOGIN_SUBJECT = 'Your CampusGate sign-in code';
 const LOGIN_INTRO = 'Someone (hopefully you) entered your password on CampusGate.';
@@ -36,7 +37,7 @@ function createSecondFactorService({ db, preauthTickets, otp, verifiers = {}, ma
         result.retryAfterSec = err.retryAfterSec; // a recent code is still valid
       } else if (err instanceof DeliveryError) {
         result.deliveryFailed = true;
-        log.error({ event: 'otp_delivery_failed', userId: user.id, err }, 'sign-in code could not be sent');
+        log.error({ event: 'otp_delivery_failed', userId: user.id, error: safeError(err) }, 'sign-in code could not be sent');
       } else {
         throw err;
       }

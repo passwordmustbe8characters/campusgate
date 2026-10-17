@@ -21,6 +21,16 @@
     return data;
   }
 
+  // Password reset: the token comes in the URL fragment (never sent to the server).
+  // Copy it into the form, then remove it from the address bar and history.
+  var tokenMatch = /[#&]token=([A-Za-z0-9_-]+)/.exec(window.location.hash);
+  document.querySelectorAll('form[data-token-from-hash]').forEach(function (form) {
+    if (tokenMatch) form.querySelector('input[name="token"]').value = tokenMatch[1];
+  });
+  if (tokenMatch && window.history.replaceState) {
+    window.history.replaceState(null, '', window.location.pathname);
+  }
+
   document.querySelectorAll('form[data-api]').forEach(function (form) {
     var button = form.querySelector('button[type="submit"]');
     var message = form.querySelector('[data-message]');
@@ -55,7 +65,10 @@
             if (redirect) { window.location.assign(redirect); return; }
             if (form.hasAttribute('data-reload')) { window.location.reload(); return; }
             setText(message, body.message || 'Done.', 'ok');
+            var tokenInput = form.querySelector('input[name="token"]');
+            var keepToken = tokenInput && tokenInput.value;
             form.reset();
+            if (keepToken) tokenInput.value = keepToken;
             // TOTP enrolment: show the QR code and manual key.
             var qr = form.querySelector('[data-qr]');
             if (qr && body.qrDataUrl) {

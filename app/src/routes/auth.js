@@ -67,7 +67,24 @@ const sixDigitCode = (name = 'code') =>
  * @param settings            security-settings controller (account ticket only)
  * @param requireAccount      the ONE middleware that accepts the interim account ticket
  */
-function authRouter({ controller, settings, requireAccount }) {
+const forgotRules = [
+  body('email')
+    .isString().withMessage('Enter your email address.')
+    .bail()
+    .trim()
+    .isLength({ max: 254 }).withMessage('Email is too long.')
+    .bail()
+    .isEmail().withMessage('Enter a valid email address.'),
+];
+
+const resetRules = [
+  body('token').isString().withMessage('This reset link is invalid.').bail().isLength({ max: 64 }).withMessage('This reset link is invalid.'),
+  passwordField('newPassword'),
+];
+
+const changeRules = [passwordField('currentPassword'), passwordField('newPassword')];
+
+function authRouter({ controller, settings, passwords, requireAccount }) {
   const router = express.Router();
   router.post('/auth/register', registerRules, validate, controller.register);
   router.post('/auth/login', loginRules, validate, controller.login);
@@ -90,6 +107,11 @@ function authRouter({ controller, settings, requireAccount }) {
   router.post('/auth/2fa/email/confirm', requireAccount, sixDigitCode(), validate, settings.confirmEmail2fa);
   router.post('/auth/totp/enrol', requireAccount, settings.startTotp);
   router.post('/auth/totp/enrol/confirm', requireAccount, sixDigitCode(), validate, settings.confirmTotp);
+  router.post('/auth/password/change', requireAccount, changeRules, validate, passwords.change);
+
+  // Password recovery (no ticket: the emailed token is the proof).
+  router.post('/auth/password/forgot', forgotRules, validate, passwords.forgot);
+  router.post('/auth/password/reset', resetRules, validate, passwords.reset);
   return router;
 }
 

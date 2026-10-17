@@ -1,6 +1,7 @@
 'use strict';
 
 const { STATUS_CODES } = require('node:http');
+const { safeError } = require('../services/metrics');
 
 // Errors that mean "overloaded or a dependency is down", not "bug": answer 503.
 //  - KnexTimeoutError: no free DB connection in time
@@ -25,8 +26,10 @@ function errorHandler(logger) {
     if (isUnavailable(err)) status = 503;
     const log = req.log || logger;
 
-    if (status >= 500) log.error({ err }, 'unhandled error');
-    else log.warn({ err }, 'request error');
+    // Delivery errors can quote the recipient's address: log the scrubbed form.
+    const detail = err.name === 'DeliveryError' ? { error: safeError(err) } : { err };
+    if (status >= 500) log.error(detail, 'unhandled error');
+    else log.warn(detail, 'request error');
 
     if (res.headersSent) {
       res.end();

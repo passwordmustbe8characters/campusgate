@@ -32,6 +32,22 @@ function pagesRouter({ db, csrf, requireAccount, settingsService }) {
     });
   });
 
+  router.get('/forgot-password', csrf.ensurePreSession, (req, res) => {
+    res.render('forgot-password', { title: 'Forgot password', csrfToken: csrf.generateCsrfToken(req, res) });
+  });
+
+  // The token arrives in the URL fragment (#token=...), which the browser never
+  // sends to the server; forms.js copies it into the form.
+  router.get('/reset-password', csrf.ensurePreSession, async (req, res) => {
+    const policy = await getPolicy(db);
+    res.set('Referrer-Policy', 'no-referrer');
+    res.render('reset-password', {
+      title: 'Choose a new password',
+      csrfToken: csrf.generateCsrfToken(req, res),
+      passwordRules: describePolicy(policy),
+    });
+  });
+
   // Second step of sign-in. The method only chooses which form to show; the
   // pre-auth ticket decides what is actually accepted.
   router.get('/verify', csrf.ensurePreSession, (req, res) => {

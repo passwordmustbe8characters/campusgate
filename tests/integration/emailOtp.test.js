@@ -157,8 +157,9 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
   });
 
   test('FR-P5: delivery failure does not fail the password step, returns 503 on resend, and never counts', async () => {
-    const failing = captureDelivery({ fail: true });
-    const { post, res } = await passwordStep({ delivery: failing });
+    const { lines, logger } = captureLogs();
+    const failing = captureDelivery({ fail: true, failMessage: `550 no such mailbox <${student.email}>` });
+    const { post, res } = await passwordStep({ delivery: failing, logger });
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'second_factor_required', codeSent: false });
 
@@ -167,6 +168,9 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
     expect((await post('/auth/otp/resend')).status).toBe(503); // cooldown lifted after a failed send, not 429
     expect(await db('otp_codes').where({ used: false })).toHaveLength(0); // failed codes are cancelled
     expect((await userRow(db, student.matric_no)).failed_attempts).toBe(0);
+    // Failures are logged, but the address quoted in the SMTP error is scrubbed.
+    expect(lines.some((l) => l.includes('otp_delivery_failed'))).toBe(true);
+    expect(lines.join('')).not.toContain(student.email);
   });
 
   test('2FA sign-in returns 503 when Redis is down, and nothing is counted', async () => {

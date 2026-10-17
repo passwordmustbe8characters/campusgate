@@ -20,6 +20,9 @@ const { createTicketStore } = require('./services/tickets');
 const { createDelivery } = require('./services/delivery');
 const { createOtpService } = require('./services/otpService');
 const { createTotpService } = require('./services/totpService');
+const { createPasswordService } = require('./services/passwordService');
+const { createMetrics } = require('./services/metrics');
+const { createPasswordController } = require('./controllers/passwordController');
 const { createSecondFactorService } = require('./services/secondFactorService');
 const { createAccountSettingsService } = require('./services/accountSettingsService');
 const { createAuthController } = require('./controllers/authController');
@@ -46,14 +49,19 @@ function createServices({ config, logger, db, redis, hasher, delivery }) {
     maxAttempts: config.preauthMaxAttempts,
     logger,
   });
+  const metrics = createMetrics({ redis, logger });
   return {
     preauthTickets,
     accountTickets,
     otp,
     totp,
     secondFactor,
+    metrics,
     authService: createAuthService({ db, hasher, logger }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger }),
+    passwordService: createPasswordService({
+      db, redis, hasher, delivery, config, tickets: [preauthTickets, accountTickets], metrics, logger,
+    }),
   };
 }
 
@@ -77,6 +85,7 @@ function createApp({
 
   const controller = createAuthController({ ...services, cookies });
   const settings = createSettingsController(services);
+  const passwords = createPasswordController({ passwordService: services.passwordService, cookies });
 
   app.set('views', path.join(__dirname, '..', 'views'));
   app.set('view engine', 'ejs');
@@ -103,7 +112,7 @@ function createApp({
   // Every non-GET/HEAD/OPTIONS request below this line needs a valid CSRF token.
   app.use(csrf.doubleCsrfProtection);
   app.use(pagesRouter({ db, csrf, requireAccount, settingsService: services.settingsService }));
-  app.use(authRouter({ controller, settings, requireAccount }));
+  app.use(authRouter({ controller, settings, passwords, requireAccount }));
 
   app.use(notFound);
   app.use(errorHandler(logger));
@@ -112,3 +121,4 @@ function createApp({
 }
 
 module.exports = { createApp, createServices };
+

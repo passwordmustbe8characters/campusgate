@@ -55,4 +55,26 @@ describe('email delivery end to end through real SMTP (Mailpit)', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('signed_in');
   });
+
+  test('password reset: the link arrives by email, works once, and a "password changed" email follows', async () => {
+    const { post } = await csrfAgent(buildRealApp({ db, redis, delivery }));
+    expect((await post('/auth/password/forgot', { email: student.email })).status).toBe(202);
+
+    const email = await mailpit.latestTo(student.email);
+    expect(email.Subject).toBe('Reset your CampusGate password');
+    const token = /reset-password#token=([A-Za-z0-9_-]{43})/.exec(email.Text)[1];
+
+    expect((await post('/auth/password/reset', { token, newPassword: 'Mailpit-New-Pass-9' })).status).toBe(200);
+    expect((await post('/auth/password/reset', { token, newPassword: 'Mailpit-New-Pass-10' })).status).toBe(400);
+
+    const deadline = Date.now() + 10000;
+    let subjects = [];
+    while (Date.now() < deadline) {
+      const res = await fetch(`${mailpit.url}/api/v1/search?query=${encodeURIComponent(`to:"${student.email}"`)}`);
+      subjects = (await res.json()).messages.map((m) => m.Subject);
+      if (subjects.includes('Your CampusGate password was changed')) break;
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    expect(subjects).toContain('Your CampusGate password was changed');
+  });
 });

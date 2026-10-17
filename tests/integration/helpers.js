@@ -61,13 +61,14 @@ function captureLogs() {
  * In-memory delivery driver: records every message so tests can read codes.
  * Registered as 'console' (an allowed otp_codes.channel); prints nothing.
  */
-function captureDelivery({ fail = false } = {}) {
+function captureDelivery({ fail = false, delayMs = 0, failMessage = 'simulated delivery failure' } = {}) {
   const sent = [];
   return {
     name: 'console',
     sent,
     async send(message) {
-      if (fail) throw new DeliveryError('console delivery failed', new Error('simulated delivery failure'));
+      if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+      if (fail) throw new DeliveryError('console delivery failed', new Error(failMessage));
       sent.push(message);
     },
     lastCode() {
@@ -97,6 +98,17 @@ const mailpit = {
     throw new Error(`no email to ${address} within ${timeoutMs} ms`);
   },
 };
+
+/** Poll until fn() returns something truthy (for background work such as emails). */
+async function waitFor(fn, { timeoutMs = 5000, intervalMs = 50 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await fn();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error('waitFor: condition not met in time');
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
 
 /** Turn on email 2FA for a seeded user directly in the DB. */
 const enableEmail2fa = (db, matric) =>
@@ -206,5 +218,6 @@ module.exports = {
   captureDelivery,
   mailpit,
   enableEmail2fa,
+  waitFor,
   userRow,
 };
