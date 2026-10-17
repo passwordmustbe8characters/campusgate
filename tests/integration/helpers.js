@@ -21,6 +21,11 @@ const PASSWORDS = Object.freeze({
   admin: 'Admin-Seed-Pass1!',
 });
 
+const TEST_KEYS = Object.freeze({
+  tokenHmacKey: Buffer.alloc(32, 11).toString('base64url'),
+  totpEncKey: Buffer.alloc(32, 12).toString('base64url'),
+});
+
 // Small seed for most tests: 3 registered + 3 free students, plus staff and admin.
 const SMALL_SEED = { registeredStudents: 3, freeStudents: 3 };
 const STUDENTS = generateStudents(SMALL_SEED.registeredStudents + SMALL_SEED.freeStudents);
@@ -60,6 +65,8 @@ function buildRealApp({ db, redis, hasher, env = {}, logger } = {}) {
     REDIS_URL: redisUrl,
     CSRF_SECRET: 'integration-test-csrf-secret-0123456789',
     BCRYPT_COST: '4',
+    TOKEN_HMAC_KEY: TEST_KEYS.tokenHmacKey,
+    TOTP_ENC_KEY: TEST_KEYS.totpEncKey,
     ...env,
   });
   return createApp({
@@ -130,6 +137,7 @@ const userRow = (db, matric) => db('users').where({ matric_or_staff_id: matric }
 
 module.exports = {
   PASSWORDS,
+  TEST_KEYS,
   REGISTERED,
   FREE,
   connectDb,

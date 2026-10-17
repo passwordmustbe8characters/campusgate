@@ -53,6 +53,43 @@ function bool(env, name, fallback, errors) {
   return fallback;
 }
 
+/**
+ * A binary key given as base64 or base64url (e.g. 32 random bytes:
+ * node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))").
+ */
+function key(env, name, { exactBytes, minBytes }, errors) {
+  const raw = env[name];
+  if (!raw) {
+    errors.push(`${name} is required`);
+    return undefined;
+  }
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(raw)) {
+    errors.push(`${name} must be base64 or base64url`);
+    return undefined;
+  }
+  const bytes = Buffer.from(raw, 'base64');
+  if (exactBytes && bytes.length !== exactBytes) {
+    errors.push(`${name} must decode to exactly ${exactBytes} bytes (got ${bytes.length})`);
+  } else if (minBytes && bytes.length < minBytes) {
+    errors.push(`${name} must decode to at least ${minBytes} bytes (got ${bytes.length})`);
+  }
+  return bytes;
+}
+
+function url(env, name, fallback, errors) {
+  const value = env[name] || fallback;
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
+    return parsed.origin;
+  } catch {
+    errors.push(`${name} must be an http(s) URL`);
+    return fallback;
+  }
+}
+
+const DELIVERY_DRIVERS = ['console', 'email', 'sms-mock'];
+
 function bcryptCost(env, nodeEnv, errors) {
   const min = nodeEnv === 'test' ? BCRYPT_TEST_MIN_COST : BCRYPT_MIN_COST;
   return intInRange(env, 'BCRYPT_COST', BCRYPT_DEFAULT_COST, min, BCRYPT_MAX_COST, errors);
@@ -87,10 +124,44 @@ function loadConfig(env = process.env) {
     csrfSecret: required(env, 'CSRF_SECRET', errors),
     // Secure cookies need HTTPS (Phase 9). Default on in production only.
     cookieSecure: bool(env, 'COOKIE_SECURE', nodeEnv === 'production', errors),
+
+    // --- Phase 2: second factors and recovery ---
+    // HMAC key for OTPs, backup codes, reset tokens and ticket ids (domain-separated per use).
+    tokenHmacKey: key(env, 'TOKEN_HMAC_KEY', { minBytes: 32 }, errors),
+    // AES-256-GCM key for TOTP secrets at rest. Losing or changing it makes stored TOTP secrets unreadable.
+    totpEncKey: key(env, 'TOTP_ENC_KEY', { exactBytes: 32 }, errors),
+    appBaseUrl: url(env, 'APP_BASE_URL', 'http://localhost:3000', errors),
+    otpDeliveryDriver: oneOf(env, 'OTP_DELIVERY_DRIVER', 'email', DELIVERY_DRIVERS, errors),
+    deliveryTimeoutMs: intInRange(env, 'DELIVERY_TIMEOUT_MS', 10000, 100, 60000, errors),
+    smtp: {
+      host: env.SMTP_HOST || 'localhost',
+      port: intInRange(env, 'SMTP_PORT', 1025, 1, 65535, errors),
+      secure: bool(env, 'SMTP_SECURE', false, errors),
+      user: env.SMTP_USER || undefined,
+      pass: env.SMTP_PASS || undefined,
+    },
+    mailFrom: env.MAIL_FROM || 'CampusGate <no-reply@campusgate.test>',
+    resetTokenTtlMin: intInRange(env, 'RESET_TOKEN_TTL_MIN', 30, 5, 1440, errors),
+    otpResendCooldownSec: intInRange(env, 'OTP_RESEND_COOLDOWN_SEC', 60, 1, 3600, errors),
+    resetCooldownSec: intInRange(env, 'RESET_COOLDOWN_SEC', 60, 1, 3600, errors),
+    preauthTtlSec: intInRange(env, 'PREAUTH_TTL_SEC', 300, 30, 1800, errors),
+    preauthMaxAttempts: intInRange(env, 'PREAUTH_MAX_ATTEMPTS', 5, 1, 20, errors),
+    // Interim settings-only ticket (Phase 2); TODO(Phase 4): delete with the JWT session.
+    accountTicketTtlMin: intInRange(env, 'ACCOUNT_TICKET_TTL_MIN', 10, 1, 60, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {
     errors.push('CSRF_SECRET must be at least 32 characters');
+  }
+  if (config.otpDeliveryDriver === 'console' && nodeEnv === 'production') {
+    errors.push('OTP_DELIVERY_DRIVER=console prints codes to stdout and is refused when NODE_ENV=production');
+  }
+  if (config.otpDeliveryDriver === 'sms-mock' && nodeEnv === 'production') {
+    errors.push('OTP_DELIVERY_DRIVER=sms-mock keeps codes in a plain Redis list and is refused when NODE_ENV=production');
+  }
+  const secrets = [env.CSRF_SECRET, env.TOKEN_HMAC_KEY, env.TOTP_ENC_KEY].filter(Boolean);
+  if (new Set(secrets).size !== secrets.length) {
+    errors.push('CSRF_SECRET, TOKEN_HMAC_KEY and TOTP_ENC_KEY must all be different');
   }
 
   fail(errors);
@@ -119,4 +190,4 @@ function loadSeedConfig(env = process.env) {
   return Object.freeze(config);
 }
 
-module.exports = { loadConfig, loadSeedConfig, loadEnvFile, BCRYPT_MIN_COST };
+module.exports = { loadConfig, loadSeedConfig, loadEnvFile, BCRYPT_MIN_COST, DELIVERY_DRIVERS };

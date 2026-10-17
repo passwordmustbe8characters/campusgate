@@ -2,7 +2,9 @@
 
 const { connectDb } = require('./helpers');
 
-const TABLES = ['policies', 'roles', 'student_records', 'users'];
+const TABLES = [
+  'otp_codes', 'password_reset_tokens', 'policies', 'roles', 'student_records', 'totp_backup_codes', 'users',
+];
 
 async function tables(db) {
   const { rows } = await db.raw(
@@ -69,6 +71,35 @@ describe('migrations (real PostgreSQL)', () => {
         .rejects.toThrow(/unique constraint/);
       await expect(db('users').where({ email: user.email }).update({ failed_attempts: -1 })).rejects.toThrow(/check constraint/);
       await db('users').where({ email: user.email }).del();
+    });
+
+    test('FR-A13: require_2fa_admin cannot be switched off', async () => {
+      await expect(db('policies').where({ id: 1 }).update({ require_2fa_admin: false }))
+        .rejects.toThrow(/policies_admin_2fa_always/);
+    });
+
+    test('2FA flag, method and TOTP secret must agree', async () => {
+      const user = {
+        matric_or_staff_id: 'MIGTEST3', username: 'MIGTEST3', email: 'mig3@campusgate.test', password_hash: 'x', role_id: 1,
+      };
+      await expect(db('users').insert({ ...user, two_factor_enabled: true }))
+        .rejects.toThrow(/users_2fa_method_matches_flag/);
+      await expect(db('users').insert({ ...user, two_factor_method: 'email' }))
+        .rejects.toThrow(/users_2fa_method_matches_flag/);
+      await expect(db('users').insert({ ...user, two_factor_enabled: true, two_factor_method: 'totp' }))
+        .rejects.toThrow(/users_totp_needs_secret/);
+      await expect(db('users').insert({ ...user, two_factor_enabled: true, two_factor_method: 'sms' }))
+        .rejects.toThrow(/check constraint/);
+    });
+
+    test('OTP attempts are capped at 3 by the database too', async () => {
+      const [u] = await db('users').insert({
+        matric_or_staff_id: 'MIGTEST4', username: 'MIGTEST4', email: 'mig4@campusgate.test', password_hash: 'x', role_id: 1,
+      }).returning('id');
+      const row = { user_id: u.id, code_hash: 'h', channel: 'email', expires_at: db.fn.now() };
+      await expect(db('otp_codes').insert({ ...row, attempts_used: 4 })).rejects.toThrow(/check constraint/);
+      await expect(db('otp_codes').insert({ ...row, channel: 'carrier-pigeon' })).rejects.toThrow(/check constraint/);
+      await db('users').where({ id: u.id }).del();
     });
   });
 });

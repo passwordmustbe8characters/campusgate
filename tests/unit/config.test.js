@@ -3,10 +3,15 @@
 const { loadConfig, loadSeedConfig } = require('../../app/src/config');
 const { TEST_ENV } = require('./helpers');
 
+const KEY_A = Buffer.alloc(32, 7).toString('base64url');
+const KEY_B = Buffer.alloc(32, 9).toString('base64');
+
 const MINIMAL = {
   DATABASE_URL: 'postgres://x',
   REDIS_URL: 'redis://x',
   CSRF_SECRET: 'x'.repeat(32),
+  TOKEN_HMAC_KEY: KEY_A,
+  TOTP_ENC_KEY: KEY_B,
 };
 
 describe('loadConfig', () => {
@@ -49,6 +54,60 @@ describe('loadConfig', () => {
 
   test('secure cookies default on in production', () => {
     expect(loadConfig({ ...MINIMAL, NODE_ENV: 'production' }).cookieSecure).toBe(true);
+  });
+});
+
+describe('Phase 2 keys and delivery settings', () => {
+  test('both keys are required', () => {
+    const { TOKEN_HMAC_KEY, TOTP_ENC_KEY, ...rest } = MINIMAL;
+    expect(() => loadConfig(rest)).toThrow(/TOKEN_HMAC_KEY is required[\s\S]*TOTP_ENC_KEY is required/);
+  });
+
+  test('keys are decoded from base64 or base64url', () => {
+    const config = loadConfig(MINIMAL);
+    expect(config.tokenHmacKey).toEqual(Buffer.alloc(32, 7));
+    expect(config.totpEncKey).toEqual(Buffer.alloc(32, 9));
+  });
+
+  test.each([
+    ['TOTP_ENC_KEY', Buffer.alloc(31).toString('base64'), /exactly 32 bytes/],
+    ['TOTP_ENC_KEY', Buffer.alloc(33).toString('base64'), /exactly 32 bytes/],
+    ['TOKEN_HMAC_KEY', Buffer.alloc(16).toString('base64'), /at least 32 bytes/],
+    ['TOKEN_HMAC_KEY', 'not base64!!', /base64/],
+  ])('rejects a bad %s', (name, value, message) => {
+    expect(() => loadConfig({ ...MINIMAL, [name]: value })).toThrow(message);
+  });
+
+  test('the three secrets must all be different', () => {
+    expect(() => loadConfig({ ...MINIMAL, TOTP_ENC_KEY: KEY_A })).toThrow(/must all be different/);
+  });
+
+  test('defaults: email driver, 30-minute reset tokens, 60 s cooldowns, 5 ticket attempts', () => {
+    expect(loadConfig(MINIMAL)).toMatchObject({
+      otpDeliveryDriver: 'email',
+      resetTokenTtlMin: 30,
+      otpResendCooldownSec: 60,
+      resetCooldownSec: 60,
+      preauthTtlSec: 300,
+      preauthMaxAttempts: 5,
+      accountTicketTtlMin: 10,
+      appBaseUrl: 'http://localhost:3000',
+    });
+  });
+
+  test('reset token lifetime is configurable', () => {
+    expect(loadConfig({ ...MINIMAL, RESET_TOKEN_TTL_MIN: '45' }).resetTokenTtlMin).toBe(45);
+  });
+
+  test('console driver is refused in production but allowed in development', () => {
+    expect(() => loadConfig({ ...MINIMAL, NODE_ENV: 'production', OTP_DELIVERY_DRIVER: 'console' }))
+      .toThrow(/refused when NODE_ENV=production/);
+    expect(loadConfig({ ...MINIMAL, OTP_DELIVERY_DRIVER: 'console' }).otpDeliveryDriver).toBe('console');
+  });
+
+  test('rejects an unknown driver and a non-http APP_BASE_URL', () => {
+    expect(() => loadConfig({ ...MINIMAL, OTP_DELIVERY_DRIVER: 'pigeon' })).toThrow(/OTP_DELIVERY_DRIVER/);
+    expect(() => loadConfig({ ...MINIMAL, APP_BASE_URL: 'javascript:alert(1)' })).toThrow(/APP_BASE_URL/);
   });
 });
 
