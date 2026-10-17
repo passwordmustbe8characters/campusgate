@@ -81,6 +81,12 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
     return res.status(401).json({ error: INVALID_CODE_MESSAGE });
   };
 
+  /** POST /auth/totp/verify with either { code } (authenticator) or { backupCode }. */
+  const verifyTotpOrBackup = (req, res) =>
+    typeof req.body.backupCode === 'string'
+      ? verifySecondFactor('backup', 'backupCode')(req, res)
+      : verifySecondFactor('totp', 'code')(req, res);
+
   async function resendOtp(req, res) {
     const result = await secondFactor.resend(req.cookies[cookies.names.preauth], { log: req.log });
     if (result.status === 'restart') {
@@ -90,7 +96,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
     return res.status(200).json({ message: 'We sent a new code to your email.' });
   }
 
-  return { register, login, verifySecondFactor, resendOtp };
+  return { register, login, verifySecondFactor, verifyTotpOrBackup, resendOtp };
 }
 
 module.exports = {

@@ -13,6 +13,8 @@ const ACCOUNT_TICKET_ROUTES = Object.freeze([
   'GET /account/security',
   'POST /auth/2fa/email/enable',
   'POST /auth/2fa/email/confirm',
+  'POST /auth/totp/enrol',
+  'POST /auth/totp/enrol/confirm',
 ]);
 
 function ticketCookies(config) {

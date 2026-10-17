@@ -49,6 +49,7 @@ async function loadAccount(db, userId) {
       'users.two_factor_enabled',
       'users.two_factor_method',
       'users.totp_secret_enc',
+      'users.totp_last_step',
       'roles.name as role',
       db.raw('(users.locked_until IS NOT NULL AND users.locked_until > now()) AS is_locked'),
     );

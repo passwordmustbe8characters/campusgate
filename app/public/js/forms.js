@@ -56,6 +56,24 @@
             if (form.hasAttribute('data-reload')) { window.location.reload(); return; }
             setText(message, body.message || 'Done.', 'ok');
             form.reset();
+            // TOTP enrolment: show the QR code and manual key.
+            var qr = form.querySelector('[data-qr]');
+            if (qr && body.qrDataUrl) {
+              qr.querySelector('img').src = body.qrDataUrl;
+              qr.querySelector('[data-secret]').textContent = body.secret;
+              qr.hidden = false;
+            }
+            // Backup codes: shown once.
+            var list = form.querySelector('[data-backup-codes]');
+            if (list && body.backupCodes) {
+              list.textContent = '';
+              body.backupCodes.forEach(function (code) {
+                var li = document.createElement('li');
+                li.textContent = code;
+                list.appendChild(li);
+              });
+              list.hidden = false;
+            }
             return;
           }
           if (body.restart) {

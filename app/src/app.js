@@ -19,6 +19,7 @@ const { createAuthService } = require('./services/authService');
 const { createTicketStore } = require('./services/tickets');
 const { createDelivery } = require('./services/delivery');
 const { createOtpService } = require('./services/otpService');
+const { createTotpService } = require('./services/totpService');
 const { createSecondFactorService } = require('./services/secondFactorService');
 const { createAccountSettingsService } = require('./services/accountSettingsService');
 const { createAuthController } = require('./controllers/authController');
@@ -36,16 +37,23 @@ function createServices({ config, logger, db, redis, hasher, delivery }) {
   const otp = createOtpService({
     db, redis, delivery, hmacKey: config.tokenHmacKey, cooldownSec: config.otpResendCooldownSec,
   });
+  const totp = createTotpService({ db, redis, encKey: config.totpEncKey, hmacKey: config.tokenHmacKey });
   const secondFactor = createSecondFactorService({
-    db, preauthTickets, otp, maxAttempts: config.preauthMaxAttempts, logger,
+    db,
+    preauthTickets,
+    otp,
+    verifiers: { totp: totp.verifyLogin, backup: totp.verifyBackupCode },
+    maxAttempts: config.preauthMaxAttempts,
+    logger,
   });
   return {
     preauthTickets,
     accountTickets,
     otp,
+    totp,
     secondFactor,
     authService: createAuthService({ db, hasher, logger }),
-    settingsService: createAccountSettingsService({ db, otp, logger }),
+    settingsService: createAccountSettingsService({ db, otp, totp, logger }),
   };
 }
 

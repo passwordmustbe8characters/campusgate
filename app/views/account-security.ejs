@@ -8,8 +8,25 @@
       <p class="msg msg-ok">On (<%= status.twoFactorMethod === 'totp' ? 'authenticator app' : 'email codes' %>).</p>
     <% } else { %>
       <p>Off.</p>
+      <h3>Use an authenticator app (recommended)</h3>
+      <form data-api="/auth/totp/enrol" novalidate>
+        <button type="submit">Set up authenticator app</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+        <div data-qr hidden>
+          <img alt="QR code for your authenticator app" width="240" height="240">
+          <p class="hint">Can't scan? Type this key: <code data-secret></code></p>
+        </div>
+      </form>
+      <form data-api="/auth/totp/enrol/confirm" novalidate>
+        <label for="totpCode">6-digit code from the app</label>
+        <input id="totpCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+        <p class="field-error" data-error-for="code"></p>
+        <button type="submit">Turn on authenticator app</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+        <ol data-backup-codes hidden></ol>
+      </form>
       <% if (status.role !== 'admin') { %>
-        <h3>Use email codes</h3>
+        <h3>Or use email codes</h3>
         <form data-api="/auth/2fa/email/enable" novalidate>
           <button type="submit">Send me a code</button>
           <p class="msg" data-message role="status" aria-live="polite"></p>
@@ -22,7 +39,7 @@
           <p class="msg" data-message role="status" aria-live="polite"></p>
         </form>
       <% } else { %>
-        <p class="msg msg-error">Administrators must turn on an authenticator app before using the admin console.</p>
+        <p class="msg msg-error">Administrators must use an authenticator app before using the admin console.</p>
       <% } %>
     <% } %>
 <%- include('partials/bottom') %>

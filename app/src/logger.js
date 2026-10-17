@@ -16,8 +16,13 @@ const SECRET_FIELDS = [
   'totpCode',
   'token',
   'backupCode',
+  'backupCodes',
   'totpSecret',
   'secret',
+  'qrDataUrl',
+  'otpauthUri',
+  'resetToken',
+  'resetUrl',
 ];
 
 const REDACT_PATHS = [

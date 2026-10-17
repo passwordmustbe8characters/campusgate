@@ -75,10 +75,21 @@ function authRouter({ controller, settings, requireAccount }) {
   // Second step of sign-in (pre-auth ticket cookie).
   router.post('/auth/otp', sixDigitCode(), validate, controller.verifySecondFactor('email', 'code'));
   router.post('/auth/otp/resend', controller.resendOtp);
+  router.post(
+    '/auth/totp/verify',
+    body().custom((b) => (typeof b.code === 'string') !== (typeof b.backupCode === 'string'))
+      .withMessage('Enter an authenticator code or a backup code.'),
+    body('code').optional().isString().trim().matches(/^\d{6}$/).withMessage('Enter the 6-digit code.'),
+    body('backupCode').optional().isString().trim().isLength({ min: 10, max: 11 }).withMessage('Enter a backup code like XXXXX-XXXXX.'),
+    validate,
+    controller.verifyTotpOrBackup,
+  );
 
   // Security settings: interim account ticket required (see ACCOUNT_TICKET_ROUTES).
   router.post('/auth/2fa/email/enable', requireAccount, settings.startEmail2fa);
   router.post('/auth/2fa/email/confirm', requireAccount, sixDigitCode(), validate, settings.confirmEmail2fa);
+  router.post('/auth/totp/enrol', requireAccount, settings.startTotp);
+  router.post('/auth/totp/enrol/confirm', requireAccount, sixDigitCode(), validate, settings.confirmTotp);
   return router;
 }
 

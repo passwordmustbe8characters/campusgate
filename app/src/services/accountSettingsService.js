@@ -16,7 +16,7 @@ class SettingsError extends Error {
  * Email 2FA: send a code to the account email, confirm it, then 2FA is on.
  * Admins must use TOTP (FR-A13), so they cannot choose email.
  */
-function createAccountSettingsService({ db, otp, logger }) {
+function createAccountSettingsService({ db, otp, totp, logger }) {
   async function requireAccount(userId) {
     const account = await loadAccount(db, userId);
     if (!account || !account.is_active || account.is_locked) throw new SettingsError(401, 'Please sign in again.');
@@ -47,6 +47,22 @@ function createAccountSettingsService({ db, otp, logger }) {
     log.info({ event: '2fa_enabled', userId, method: 'email' }, 'email two-step sign-in enabled');
   }
 
+  /** TOTP enrolment (FR-A8). Returns the QR code and the secret for manual entry (shown once). */
+  async function startTotp(userId, { log = logger } = {}) {
+    const account = await requireAccount(userId);
+    const result = await totp.startEnrolment(account);
+    log.info({ event: 'totp_enrolment_started', userId }, 'TOTP enrolment started');
+    return result;
+  }
+
+  /** Confirm TOTP with one code; returns the 8 backup codes (shown once, stored hashed). */
+  async function confirmTotp(userId, code, { log = logger } = {}) {
+    const account = await requireAccount(userId);
+    const result = await totp.confirmEnrolment(account, code);
+    log.info({ event: '2fa_enabled', userId, method: 'totp', backupCodesIssued: result.backupCodes.length }, 'TOTP enabled');
+    return result;
+  }
+
   async function status(userId) {
     const account = await requireAccount(userId);
     return {
@@ -57,7 +73,7 @@ function createAccountSettingsService({ db, otp, logger }) {
     };
   }
 
-  return { requireAccount, startEmail2fa, confirmEmail2fa, status };
+  return { requireAccount, startEmail2fa, confirmEmail2fa, startTotp, confirmTotp, status };
 }
 
 module.exports = { createAccountSettingsService, SettingsError };
