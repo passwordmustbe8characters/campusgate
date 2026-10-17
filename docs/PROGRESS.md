@@ -8,7 +8,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 |---|---|---|
 | 0 | Scaffold | Done (Docker verified 2026-10-11) |
 | 1 | Core authentication | Done 2026-10-11 (FR-A6 partial until Phases 3 and 6) |
-| 2 | Second factors and recovery | Not started |
+| 2 | Second factors and recovery | Done 2026-10-17 (FR-A10 and FR-A13 PARTIAL until Phases 4 and 6) |
 | 3 | Authorization and audit logs | Not started |
 | 4 | Sessions, token, mock portal | Not started |
 | 5 | Peak-load core | Not started |
@@ -29,17 +29,26 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 2026-10-11 | Only students self-register (checked against `student_records`). Staff and admin accounts come from the seed. | The spec has no staff registry to validate against. |
 | 2026-10-11 | Every phase's tests include integration tests against the real PostgreSQL and Redis from docker compose, not only stand-ins. Each phase's schema and endpoint plan is approved before building. | Developer requirement. |
 | 2026-10-11 | `package-lock.json` is always regenerated inside `node:24-slim` (see README "Changing dependencies"). | Keeps `npm ci` in the Docker build working (see Phase 0 fix). |
+| 2026-10-17 | New packages: check `npm view <pkg> time` (and Docker Hub tags for images); nothing published in the last 14 days; pin exact versions so a later lock regeneration cannot pull in a newer release. | Developer requirement (Phase 2). |
+| 2026-10-17 | Phases are built in sub-steps, one commit each, with the full `npm test` run after each. | Developer requirement (Phase 2). |
 
 ## Open items handed to later phases
 
 | For phase | Item |
 |---|---|
 | 3 | Write admin unlocks to the tamper-evident audit log (unlock is CLI-only and only in the app log for now). Also log registration/login/lockout events there (currently pino log lines only). |
+| 3 | Audit-log the Phase 2 events too: `admin_reset_2fa` (CLI), OTP sent/verified, 2FA enabled, TOTP enrolled, backup code used, password reset/changed, admin enrolment required. All are pino log lines today. |
+| 4 | **Delete the interim account ticket** (`cg.acct`, `app/src/middleware/tickets.js`) and use the JWT session, with a "signed in recently" check for security settings. |
+| 4 | FR-A10 / reset: revoke the user's **sessions** after a password reset or change (today only pre-auth and account tickets are revoked). |
 | 4 | Bind CSRF tokens to the session (JWT `jti`) instead of the pre-session cookie. |
+| 3/4/6 | Put `requireAdmin2FA` (`app/src/middleware/requireAdmin2FA.js`) in front of every `/admin/*` route (FR-A13). |
 | 5 | Cache the `policies` row (per process or in Redis) **with invalidation on change**, instead of reading it from PostgreSQL on every login/registration. Measure before and after. |
 | 5 | Front-end exponential backoff on 429/503 in `app/public/js/forms.js`. |
-| 6 | Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service. |
+| 5 | Per-IP and per-account rate limits on `/auth/login`, `/auth/otp`, `/auth/totp/verify`, `/auth/otp/resend`, `/auth/password/forgot`, `/auth/password/reset`. Today only per-account cooldowns (OTP resend, reset email) and per-ticket / per-code attempt limits exist. |
+| 5, 8 | **Email delivery in the request path** (sign-in OTP is sent inside `POST /auth/login`) is a peak-load concern: a slow SMTP server slows logins. Revisit (queue, or send after responding) and measure. |
+| 6 | Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service; a 2FA reset button calling `resetTwoFactor`; dashboard counters from `cg:metrics:*` in Redis. |
 | 7 | Enforce email verification (FR-A2); `users.email_verified` already exists and is `false` for new sign-ups. |
+| 8 | `calibrate` must include the **OTP step time** (send + verify) as well as bcrypt and DB time. |
 | 9 | Check the registration privacy notice wording against the Nigeria Data Protection Act 2023 (NFR-5). |
 
 ---
@@ -351,3 +360,268 @@ The developer reported three things during `npm test`. Findings:
 - `npm test` summary (unit 70, integration 43).
 - The bcrypt timing table above (`npm run bench:bcrypt` output).
 - psql: `SELECT matric_or_staff_id, left(password_hash, 7), failed_attempts, locked_until FROM users LIMIT 5;` showing `$2b$10$` hashes and no plain passwords.
+
+---
+
+## Phase 2: Second factors and recovery (2026-10-17)
+
+Built in five sub-steps, one commit each, with the full `npm test` run after each:
+
+| Sub-step | Commit | What |
+|---|---|---|
+| 2.1 | `c807099` | Migration, key config and startup validation |
+| 2.2 | `1bae982` | Pre-auth ticket, email OTP, delivery drivers, Mailpit |
+| 2.3 | `8e178e9` | TOTP enrolment and backup codes |
+| 2.4 | `2114853` | Password reset, change, notification email |
+| 2.5 | `68503bb` | Admin 2FA enforcement, `reset-2fa` CLI, knex logs to pino |
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-A7 | Done | Email OTP: 6 digits from a CSPRNG, stored as an HMAC (server key), 5 min expiry, max 3 attempts, single use, resend with 60 s cooldown. |
+| FR-A8 | Done | TOTP enrolment with QR code; secret encrypted at rest; ±1 step drift; replay blocked; 8 hashed single-use backup codes shown once. |
+| FR-A9 | Done | Reset by emailed token: 32 random bytes, HMAC-stored, 30 min (configurable), single use, older tokens invalidated, identical response for unknown emails. |
+| FR-A10 | **PARTIAL** | Change password works (same policy, wrong current password counts as a failure, notification email). **"Logs out other sessions" waits for Phase 4** (no sessions yet); today the user's pre-auth and account tickets are revoked instead. |
+| FR-A13 | **PARTIAL** | Enforced at sign-in (an admin without TOTP can only enrol TOTP) and by the `requireAdmin2FA` middleware, both tested. **The admin console itself does not exist until Phase 6**, so no real `/admin` route uses the middleware yet. `policies.require_2fa_admin` is pinned to `true` by a CHECK constraint and is not a setting. |
+| FR-A14 | Done | Delivery interface with `console`, `email`, `sms-mock` drivers, each with a timeout. |
+| FR-A6 | Still PARTIAL | Unchanged from Phase 1 (audit log Phase 3, console Phase 6). Second-factor failures now also count toward lockout. |
+| FR-P5 | Extended | Delivery failures, delivery timeouts, Redis/DB outages, expired or exhausted codes, and a changed `TOTP_ENC_KEY` never count toward lockout (all tested). |
+
+### How sign-in works now
+1. `POST /auth/login` checks the password exactly as in Phase 1. Then:
+   - **No 2FA:** `{status: "signed_in"}` plus the account ticket (below).
+   - **2FA on:** `{status: "second_factor_required", method: "email" | "totp"}` plus a **pre-auth ticket** cookie. For email, a code is sent at once. **For a 2FA account, a correct password does not reset the failure counter**; only a completed second factor does. Otherwise someone who knows the password could keep resetting the counter and guess codes without limit.
+   - **Admin without TOTP:** `{status: "enrolment_required"}` plus an **enrolment-only** account ticket (FR-A13).
+2. `POST /auth/otp {code}` (email) or `POST /auth/totp/verify {code}` / `{backupCode}` (TOTP users) completes sign-in. TOTP users can fall back to backup codes only, never to email.
+
+**Pre-auth ticket:**
+- What it is: 256 random bits in an HttpOnly, SameSite=Strict cookie. Redis stores only an HMAC of it, so a copy of Redis contains no usable ticket.
+- Lifetime: 5 minutes, with its own limit of 5 attempts (`PREAUTH_MAX_ATTEMPTS`).
+- It's single use: a success consumes it in one atomic Redis (Lua) step.
+
+**How second-factor failures count:**
+
+| Event | Counts toward lockout? |
+|---|---|
+| Wrong email OTP, wrong TOTP code, wrong backup code, reused TOTP code (replay) | **Yes**, same counter as wrong passwords; 5 in total lock the account |
+| Expired, used-up (3 attempts) or missing OTP | No (often the system's fault, e.g. a slow email) |
+| Delivery failure or timeout, Redis or DB outage, decryption failure | No (FR-P5) |
+| Invalid input (400), missing CSRF (403), expired ticket (401 "start again") | No |
+
+**Interim account ticket** (approved for Phase 2 only; **TODO Phase 4: delete it** and use the JWT session):
+- 10 minutes, HttpOnly, SameSite=Strict, CSRF required.
+- Accepted **only** by: `GET /account/security`, `POST /auth/2fa/email/enable`, `POST /auth/2fa/email/confirm`, `POST /auth/totp/enrol`, `POST /auth/totp/enrol/confirm` and `POST /auth/password/change`.
+- A unit test walks Express's whole route tree and fails if any other route accepts it. Integration tests show it's refused by the sign-in endpoints, and that a pre-auth ticket is refused by the settings endpoints.
+- The enrolment-only variant is accepted only by the page and the two TOTP enrolment routes.
+
+### Email OTP (FR-A7, FR-A14)
+- The code comes from `crypto.randomInt` and is stored as `HMAC-SHA256(TOKEN_HMAC_KEY, "otp:" + userId + ":" + code)`, compared in constant time.
+- Each attempt is counted **before** comparing, in one atomic `UPDATE … WHERE attempts_used < 3`. In the test, 10 simultaneous wrong codes gave exactly 3 comparisons and 3 counted failures.
+- A new code cancels older open codes. Resend has a 60 s per-account cooldown in Redis (429 with `Retry-After`).
+- If delivery fails, the code is cancelled and the cooldown lifted, so the user can retry immediately. The failure is logged with any email address scrubbed.
+
+**Delivery drivers** (`OTP_DELIVERY_DRIVER`):
+
+| Driver | Use | Production |
+|---|---|---|
+| `email` (default) | nodemailer to SMTP; Mailpit in development | Allowed |
+| `console` | Writes the message, including the code, to stdout directly, never through the logger. Logs a startup warning. | **Refused at startup** |
+| `sms-mock` | Stores the message in a capped Redis list keyed by matric number (no phone numbers are stored: NFR-5) | **Refused at startup** (my addition: it keeps codes in plain text in Redis) |
+
+### TOTP and backup codes (FR-A8)
+**Enrolment** (`POST /auth/totp/enrol`, then `/confirm`):
+- A 20-byte base32 secret is created. While pending, it's kept encrypted in Redis for 10 minutes.
+- The QR code is a PNG data URL, and the key is shown for manual entry once.
+- One valid code confirms enrolment. The secret is then stored with **AES-256-GCM using `TOTP_ENC_KEY`, with the user id as associated data**, so an encrypted secret copied onto another account fails to decrypt.
+
+**Verification** (otplib 13.5.0, API confirmed from the installed type definitions and by running it):
+- `epochTolerance: 30` accepts one 30 s step either side.
+- Replay is blocked twice over:
+  - `afterTimeStep` rejects a code from a step that was already used;
+  - an atomic `UPDATE users SET totp_last_step = ? WHERE totp_last_step < ?` means two requests with the same code can't both succeed (tested).
+- A code that isn't 6 digits makes otplib throw, so input is validated first and gets a 400, not a 500.
+
+**Backup codes:**
+- 8 codes of 10 characters from an alphabet without look-alike characters (no 0/O/1/I/L/U), about 49 bits each, shown as `XXXXX-XXXXX`.
+- Stored as HMACs, not bcrypt hashes: with 49 bits of randomness a slow hash isn't needed, and checking 8 bcrypt hashes would add about 1 s per attempt at rush hour.
+- Single use (atomic); case, dash and spaces in the input are ignored.
+
+**Switching method:** a student with email 2FA may switch to TOTP. Enrolment is refused only when TOTP is already on.
+
+### Password reset and change (FR-A9, FR-A10)
+**Forgot password:**
+- `POST /auth/password/forgot` **always answers with the same 202 body**. Lookup, token creation and sending happen **after** the response, so response time doesn't depend on whether the email exists or how slow the mail server is.
+  - In the test, a driver that takes 800 ms to send still gave responses well under 400 ms, with a known/unknown ratio between 0.33 and 3.
+- There's a 60 s cooldown per email, applied to unknown emails too.
+- Background failures are **logged without email addresses and counted** in Redis (`cg:metrics:reset_email_failures`; successes in `cg:metrics:reset_emails_sent`). They are never swallowed.
+
+**The reset link** is `APP_BASE_URL/reset-password#token=…`. The token is in the URL **fragment**, which browsers never send to the server, so it can't appear in request logs or `Referer` headers. The page's script copies it into the form and removes it from the address bar.
+
+**Reset:**
+- Same password policy. An invalid token is rejected before any bcrypt work.
+- The token is consumed atomically: of two concurrent resets with one token, exactly one wins. Older unused tokens are invalidated.
+- **A successful reset clears the lockout** (the old password it protected no longer exists) and **never touches 2FA**: the next sign-in still asks for the second factor (tested).
+
+**Change** (account ticket): a wrong current password counts as a credential failure; same policy.
+
+**After a reset or change:**
+- The user's pre-auth and account tickets are **revoked** (addition B). **TODO Phase 4: also revoke sessions.**
+- A **"your password was changed"** email goes through the same driver without blocking the request; failures are logged and counted (`cg:metrics:notification_email_failures`) (addition C).
+
+**Attempt limits for reset tokens:** each token is 256 random bits, so guessing is not feasible and there's no per-token attempt counter. Per-IP limits on `/auth/password/reset` come with the Phase 5 rate limiter.
+
+### Admin 2FA, recovery CLI and logging
+**FR-A13:**
+- An admin without TOTP who enters the correct password gets `enrolment_required`. They can't do anything except enrol TOTP: change password and email 2FA are refused.
+- After enrolling, the enrolment ticket is revoked and the admin must sign in again with a TOTP code.
+- Admins can never use email codes, even if email 2FA is forced on in the database.
+- `requireAdmin2FA` is ready for the admin console.
+
+**Lost-device recovery** (addition A): `npm run admin -- reset-2fa <ID or email> --confirm`.
+- It clears the TOTP secret, backup codes, open OTP codes and the 2FA flag, and revokes the user's tickets in Redis.
+- Without `--confirm` it refuses (exit code 2) and changes nothing.
+- An admin reset this way must re-enrol at the next sign-in. **TODO Phase 3: audit-log it.**
+
+**knex logs into pino** (answer 9):
+- knex warnings, errors and deprecations go to the app logger (`event: "knex_warning"`, …) instead of `console.log`.
+- knex's query debug output (which includes bindings) stays off.
+- PostgreSQL error fields that contain values (`detail`, e.g. "Key (token_hash)=(…) already exists", plus `where`, `parameters`, `bindings`) are removed by the logger's error serializer.
+- **Found while testing:** pino-http replaces the error serializer on per-request loggers. Without passing ours to pino-http explicitly, `detail` leaked through `req.log` (checked directly). Ours is now set on both.
+
+**Other logging:**
+- Errors that can quote an email address (SMTP errors) are logged scrubbed, under `error`.
+- Background emails are tracked, and graceful shutdown waits for them before closing the database.
+
+### Things the report should state (addition E)
+1. **If `TOTP_ENC_KEY` is lost or changed, every stored TOTP secret becomes unreadable.** Those users get a 500 at the TOTP step, which doesn't count toward lockout, and must be reset with `npm run admin -- reset-2fa <ID> --confirm`, then re-enrol. Back up the key with the database backups, but never in the same place as them.
+2. **2FA sign-in depends on Redis**, where the pre-auth tickets live. If Redis is down, a 2FA sign-in returns **503**, and nothing is counted (tested). A password-only sign-in still works without Redis; only the security-settings page is unavailable.
+3. **Email delivery in the request path is a peak-load concern.** The sign-in code is sent inside `POST /auth/login`, so a slow SMTP server makes logins slow. To revisit in Phases 5 and 8. **The `calibrate` output must include the OTP step time** (send + verify).
+
+### Versions checked (addition F)
+Commands run on 2026-10-17 (cutoff for "older than 14 days": 2026-10-03):
+
+```
+$ npm view otplib time --json        -> 13.5.0  2026-08-21   (used)
+$ npm view qrcode time --json        -> 1.5.4   2024-08-05   (used)
+$ npm view nodemailer time --json    -> 10.0.13 2026-09-30   (used)
+                                        10.0.14 2026-10-03 13:45, 10.0.15 ... 10.1.2 2026-10-16: under 14 days, NOT used
+$ curl https://hub.docker.com/v2/repositories/axllent/mailpit/tags/v1.31.3
+                                     -> tag_last_pushed 2026-09-27 (used); v1.31.4 (2026-10-03) and later: under 14 days
+```
+- All three npm packages are pinned to **exact** versions. Every newly added transitive package was also checked with `npm view <pkg> time[<version>]`; the newest is `@scure/base` 2.4.0 (2026-08-28).
+- The lock file was regenerated inside `node:24-slim`. It added 22 packages and changed no existing ones.
+- **otplib v13 API** was confirmed from `node_modules/@otplib/totp/dist/index.d.cts`: `verify({ secret, token, epochTolerance, afterTimeStep })` returns `{ valid, delta, epoch, timeStep }`. I then ran it: ±1 step accepted, 3 steps rejected, replay rejected via `afterTimeStep`, and a 5-digit token throws `TokenLengthError`.
+- **Mailpit** settings come from its runtime-options docs (`MP_MAX_MESSAGES`, `MP_SMTP_AUTH_ACCEPT_ANY`, `MP_SMTP_AUTH_ALLOW_INSECURE`). The healthcheck comes from the image itself: the v1.31.3 image ships `HEALTHCHECK ["CMD","/mailpit","readyz"]`, and `mailpit readyz --help` documents it. API paths come from the v1.31.3 swagger file: `/api/v1/search`, `/api/v1/message/{ID}`, `/api/v1/messages`.
+
+**Jest note:** otplib's CommonJS build requires `@scure/base`, which is ESM-only. Plain Node 24 loads that natively (checked in `node:24-slim`, no flags). Jest's module loader needs `--experimental-vm-modules`, so `npm run test:unit` and `test:integration` run Jest through `node --experimental-vm-modules --disable-warning=ExperimentalWarning`. This affects tests only.
+
+### Schema changes (migration `20261017120000_second_factors_and_recovery`)
+- `users` gains `two_factor_method` (`email`/`totp`) and `totp_last_step` (for replay blocking), both beyond SPEC §5. CHECKs enforce:
+  - 2FA flag ⇔ method set;
+  - TOTP ⇒ secret present.
+- `policies`: CHECK `require_2fa_admin = true`.
+- New tables:
+  - `otp_codes`: attempts capped at 3 by CHECK; `channel` must be a known driver; `created_at` added.
+  - `totp_backup_codes`: UNIQUE (user, hash).
+  - `password_reset_tokens`: unique `token_hash`; `created_at` added.
+
+### New `.env` variables
+| Variable | Default | Notes |
+|---|---|---|
+| `TOKEN_HMAC_KEY` | none (**required**) | ≥32 bytes, base64/base64url. HMAC key for OTPs, backup codes, reset tokens, ticket ids. |
+| `TOTP_ENC_KEY` | none (**required**) | **Exactly 32 bytes.** AES-256-GCM key for TOTP secrets. Losing it makes them unreadable. |
+| `OTP_DELIVERY_DRIVER` | `email` | `email` / `console` / `sms-mock` (the last two refused in production) |
+| `DELIVERY_TIMEOUT_MS` | 10000 | |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | localhost, 1025, false | compose sets `SMTP_HOST=mailpit` for the app container |
+| `MAIL_FROM` | `CampusGate <no-reply@campusgate.test>` | |
+| `APP_BASE_URL` | `http://localhost:3000` | used in reset links |
+| `PREAUTH_TTL_SEC`, `PREAUTH_MAX_ATTEMPTS` | 300, 5 | |
+| `OTP_RESEND_COOLDOWN_SEC`, `RESET_COOLDOWN_SEC` | 60, 60 | |
+| `RESET_TOKEN_TTL_MIN` | 30 | |
+| `ACCOUNT_TICKET_TTL_MIN` | 10 | interim, removed in Phase 4 |
+
+At startup, the app checks that the three secrets (`CSRF_SECRET`, `TOKEN_HMAC_KEY`, `TOTP_ENC_KEY`) are all different. On the developer machine, the two new keys were generated and appended to `.env` (values not printed); everything else uses the defaults.
+
+### Tests (run 2026-10-17)
+Final `npm test`: **unit 12 suites / 109 tests passed; integration 13 suites / 122 tests passed**, with no console output. The integration suite now also needs Mailpit (`docker compose up -d postgres redis mailpit`) and fails with a clear message if it isn't running.
+
+| New integration file | What it proves |
+|---|---|
+| `tickets.test.js` | Ticket is 256 bits, only its HMAC is in Redis, TTL set; single use; 10 concurrent consumes give 1 winner; attempt limit; 10 concurrent attempts with limit 5 give exactly 5; per-user revocation; malformed values rejected |
+| `emailOtp.test.js` | Correct password gives pre-auth ticket and code (counter not reset); code stored as HMAC, 5 min TTL; correct code signs in, single use; expired code refused and not counted; 3 attempts per code; **10 concurrent wrong codes give exactly 3 checks / 3 failures**; ticket attempt limit; second-factor failures lock the account; resend cancels the old code; cooldown gives 429 + Retry-After; **delivery failure is not counted, gives 503 on resend, and its log has no email address**; **Redis down gives 503 for 2FA** (password-only still signs in); sms-mock writes to Redis; **no OTP or ticket in logs** |
+| `totp.test.js` | QR + secret; pending secret encrypted; stored secret encrypted and bound to the user; 8 hashed backup codes; wrong confirm code refused; double enrolment refused; sign-in with TOTP; **drift ±1 accepted, −2 steps refused**; **replay refused and counted**; **replay race gives exactly one success**; backup codes single use and relaxed format; concurrent backup-code use gives 1 success; no email fallback for TOTP users; **changed `TOTP_ENC_KEY` gives 500, not counted**; malformed codes give 400; **no secret, otpauth URI, code or backup code in logs** |
+| `passwordReset.test.js` | **Byte-identical 202** for known, unknown and different-case email; **timing independent of email and mail server**; token is 32 bytes, in the fragment, HMAC-stored, 30 min; single use; expiry; newer request invalidates older tokens; policy enforced without burning the token; concurrent resets give 1 winner; **reset clears lockout**; **reset doesn't bypass 2FA**; tickets revoked; notification email doesn't block; background failures logged without the email and counted; cooldown; change password (revokes tickets, wrong current password counted, policy, needs ticket); **no token, password or email in logs** |
+| `accountTicket.test.js` | Ticket cookie flags and 10 min TTL; settings page needs it; enable email 2FA end to end; ticket refused by sign-in endpoints; pre-auth ticket refused by settings; expired ticket refused; CSRF still required |
+| `admin2fa.test.js` | Admin without TOTP gets `enrolment_required` (counter not reset); enrolment-only ticket opens only TOTP enrolment; admin with forced email 2FA still sent to TOTP enrolment; after enrolment, TOTP is needed to sign in; signed-in admin can't choose email; `requireAdmin2FA`: admin+TOTP passes, student refused, admin whose TOTP was removed refused, enrolment ticket refused; `reset-2fa` refuses without `--confirm`, clears everything, revokes tickets, admin must re-enrol, student back to password-only, unknown user gives exit 1; **knex warning goes to pino, not console** |
+| `mailpit.test.js` | Real SMTP: sign-in code email, and reset link email, single use, plus the "password changed" email |
+
+New unit tests cover:
+- config key validation (lengths, base64, all secrets different, console/sms-mock refused in production);
+- the crypto helpers (HMAC domain separation, AES-GCM bound to the user id, tamper detection);
+- the delivery timeout wrapper;
+- backup-code format;
+- 503 for Redis outages and `Retry-After`;
+- the route-tree scan for the account ticket;
+- pg `detail`/bindings dropped on both logger paths.
+
+**Problems found and fixed while building** (all in tests or test plumbing unless stated):
+- A capture driver threw a look-alike `DeliveryError` instead of the real class.
+- **App bug:** pino's `err` serializer reshaped scrubbed error objects. Fixed by logging them under `error`.
+- **App bug:** going over the ticket attempt limit returned the attempt count instead of −1, so the over-limit attempt would still have been checked. Found by review before the tests ran.
+- A test deadlocked: one test's background reset email was still writing while the next test's TRUNCATE ran. Fixed by tracking background work and waiting for it after every test, and in graceful shutdown.
+- **App bug:** pino-http hands custom serializers an already-serialized error, so ours re-wrapped it and the error type became "Object". Fixed and covered by a unit test.
+
+### End-to-end check against the running containers (2026-10-17)
+- After `docker compose up --build -d`, the app container applied the new migration ("Batch 2 run: 1 migrations"), started with `otpDeliveryDriver: "email"`, and `/health` returned 200.
+- A script (not in the repo) drove the real stack with real Mailpit emails and real TOTP codes, using the seeded `ADMIN0001` and the demo student `SCI/2025/0061`.
+- **Results:** all 26 checks in the final run passed: admin forced enrolment and its restrictions; QR and 8 backup codes; TOTP sign-in; replay refused; backup code works once; student email 2FA enable and sign-in via Mailpit; identical forgot responses; reset link in the fragment, single use; "password changed" email; 2FA still required after reset; change password and ticket revoked; lockout and CLI unlock; `reset-2fa` refusing without `--confirm`, then resetting both accounts.
+
+**What failed on the way:**
+- **First run:** step 21 failed because of the **script**, not the app. The second sign-in came within the 60 s resend cooldown, so correctly no new code was sent (`codeSent: false`). The script then picked up the earlier, already-used code by timestamp, and the Docker VM clock is about 5 s ahead of the host.
+  - I fixed the script to track emails by Mailpit message ID and to wait out the cooldown and press Resend, as a user would.
+  - That failed run had left the demo student's password changed; I restored it.
+- **Both runs:** the last two checks ("admin back to `enrolment_required`", "student back to password-only") aborted with a client-side `fetch failed` right after several `docker compose exec` CLI calls. The app logged no such requests and never restarted. Run separately straight afterwards, **both passed**. I couldn't explain or reproduce this (a 6.5 s idle keep-alive test worked). It looks like a Docker Desktop port-forwarding hiccup on this machine, not an app fault.
+
+**Driver behaviour in the container:**
+- `NODE_ENV=production OTP_DELIVERY_DRIVER=console` gives "Invalid configuration: OTP_DELIVERY_DRIVER=console … is refused when NODE_ENV=production" and exit code 1.
+- In development it logs the warning "OTP_DELIVERY_DRIVER=console: one-time codes and links are printed to stdout. Development/test only."
+
+**Final state:** `ADMIN0001` is back to "must enrol TOTP", and `SCI/2025/0061` is password-only with its original password (`Kettle-Mango-42`). Both are ready for the manual checks below.
+
+**Note for whoever runs tests:** `mailpit.test.js` **empties the Mailpit inbox** (`DELETE /api/v1/messages`), and the integration tests send real emails to it. Don't keep anything you need in the development Mailpit while running `npm test`.
+
+### What to try by hand
+Mailpit (every email the app sends): **http://localhost:8025**. App: **http://localhost:3000**.
+1. **Admin TOTP enrolment:**
+   - Sign in as `ADMIN0001` with `SEED_ADMIN_PASSWORD` from `.env`. You land on Security settings with "must set up an authenticator app".
+   - Press **Set up authenticator app** and scan the QR code with Google Authenticator, Microsoft Authenticator or Aegis (or type the key).
+   - Enter the 6-digit code and press **Turn on authenticator app**. **Write down the 8 backup codes.**
+   - Sign in again: you're asked for the authenticator code.
+2. **Backup codes:** sign in as `ADMIN0001`. On the verify page, enter one backup code in the backup-code box: it works. Go back to `/login`, sign in again (there's no sign-out button until Phase 4), and try the same backup code: it's refused.
+3. **Email OTP (student):**
+   - Sign in as `SCI/2025/0061` / `Kettle-Mango-42`. On Security settings, press **Send me a code**, open Mailpit, enter the code, and press **Turn on email codes**.
+   - Sign in again: a code arrives in Mailpit. Enter it.
+   - Try a wrong code 3 times, then the right one: refused (3-attempt limit). Press **Resend** within 60 s: "Please wait …".
+4. **Password reset:**
+   - On `/login`, press **Forgot password?** and enter `demo.student@example.com`. Then try `nobody@example.com`: the message is identical.
+   - Open the reset email in Mailpit and click the link. Notice the address bar loses the `#token=…` part.
+   - Set a new password, then click the same link again: "invalid or has expired". A "password changed" email also arrives.
+   - If 2FA is on, the next sign-in still asks for the code.
+5. **Lockout:** enter a wrong password 5 times for `SCI/2025/0061`. The correct password is then also refused.
+   - `docker compose exec app npm run admin -- locked` lists the account.
+   - Then **either** `npm run admin -- unlock SCI/2025/0061`, **or** reset the password by email, which also clears the lock.
+6. **Lost device:** `docker compose exec app npm run admin -- reset-2fa ADMIN0001` refuses. Add `--confirm` and it resets. The admin must enrol again at the next sign-in.
+
+### Evidence to capture for the report
+- Mailpit inbox showing a sign-in code email, a reset email (link with `#token=`) and a "password changed" email.
+- The Security settings page with the QR code; the 8 backup codes screen (blur them).
+- An authenticator app showing the CampusGate entry.
+- `/verify` with "Invalid or expired code."; and a 429 "Please wait …" on resend.
+- The two identical forgot-password messages (known and unknown email).
+- psql:
+  - `SELECT matric_or_staff_id, two_factor_method, left(totp_secret_enc, 12) FROM users WHERE two_factor_enabled;` shows `v1:…` ciphertext, not a base32 secret;
+  - `SELECT code_hash, attempts_used, used FROM otp_codes ORDER BY id DESC LIMIT 3;`
+  - `SELECT left(token_hash, 10), used, expires_at - created_at FROM password_reset_tokens ORDER BY id DESC LIMIT 3;` shows a 30-minute lifetime.
+- `docker compose exec redis redis-cli --scan --pattern 'cg:*'` showing hashed ticket keys, not raw tokens.
+- `npm test` summary (unit 109, integration 122).
+- `docker compose exec app npm run admin -- reset-2fa ADMIN0001` (refusal) and with `--confirm`.
