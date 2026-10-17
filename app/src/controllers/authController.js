@@ -23,7 +23,7 @@ const INVALID_CODE_MESSAGE = 'Invalid or expired code.';
 async function signIn(req, res, user, { accountTickets, cookies }) {
   cookies.clearPreauth(res);
   try {
-    cookies.setAccount(res, await accountTickets.issue({ userId: user.id, role: user.role }));
+    cookies.setAccount(res, await accountTickets.issue({ userId: user.id, role: user.role, scope: 'full' }));
   } catch (err) {
     req.log.warn({ event: 'account_ticket_unavailable', userId: user.id, err }, 'signed in without account ticket');
   }
@@ -54,6 +54,15 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
       return res.status(401).json({ error: loginFailedMessage(result.policy) });
     }
     if (result.status === 'signed_in') return signIn(req, res, result.user, ticketDeps);
+
+    // FR-A13: admin without TOTP gets an enrolment-only ticket (Redis required).
+    if (result.status === 'enrolment_required') {
+      cookies.setAccount(res, await accountTickets.issue({ userId: result.user.id, role: result.user.role, scope: 'enrol' }));
+      return res.status(200).json({
+        status: 'enrolment_required',
+        message: 'Administrators must set up an authenticator app before signing in.',
+      });
+    }
 
     // Password correct, second factor pending.
     const started = await secondFactor.start(result.user, { log: req.log });

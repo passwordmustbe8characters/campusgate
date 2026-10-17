@@ -21,7 +21,7 @@ try {
 const logger = createLogger({ level: config.logLevel });
 
 async function main() {
-  const db = createDb(config);
+  const db = createDb(config, logger);
   const redis = createRedis(config, logger);
   const hasher = createHasher(config.bcryptCost);
   // Compute the same-cost dummy hash before serving, so the first unknown-user
@@ -59,6 +59,7 @@ async function main() {
     const forceExit = setTimeout(() => process.exit(1), 10000).unref();
     try {
       await new Promise((resolve) => server.close(resolve));
+      await app.get('background').idle(); // let queued reset/notification emails finish
       await Promise.allSettled([db.destroy(), redis.quit(), delivery.close && delivery.close()]);
       clearTimeout(forceExit);
       process.exit(0);

@@ -6,6 +6,7 @@ const express = require('express');
 const helmet = require('helmet');
 const pinoHttp = require('pino-http');
 const cookieParser = require('cookie-parser');
+const { errSerializer } = require('./logger');
 
 const { healthRouter } = require('./routes/health');
 const { authRouter } = require('./routes/auth');
@@ -81,10 +82,12 @@ function createApp({
   const csrf = createCsrf(config);
   const cookies = ticketCookies(config);
   const services = createServices({ config, logger, db, redis, hasher, delivery });
-  const requireAccount = requireAccountTicket({ accountTickets: services.accountTickets, cookies });
+  const ticketDeps = { accountTickets: services.accountTickets, cookies };
+  const requireAccount = requireAccountTicket(ticketDeps);
+  const requireAccountOrEnrolment = requireAccountTicket(ticketDeps, { allowEnrolment: true });
 
   const controller = createAuthController({ ...services, cookies });
-  const settings = createSettingsController(services);
+  const settings = createSettingsController({ ...services, cookies });
   const passwords = createPasswordController({ passwordService: services.passwordService, cookies });
 
   app.set('views', path.join(__dirname, '..', 'views'));
@@ -94,6 +97,8 @@ function createApp({
   app.use(
     pinoHttp({
       logger,
+      // Keep our err serializer on request loggers too (drops DB values such as pg `detail`).
+      serializers: { err: errSerializer },
       genReqId: (req, res) => {
         const id = randomUUID();
         res.setHeader('X-Request-Id', id);
@@ -111,12 +116,14 @@ function createApp({
 
   // Every non-GET/HEAD/OPTIONS request below this line needs a valid CSRF token.
   app.use(csrf.doubleCsrfProtection);
-  app.use(pagesRouter({ db, csrf, requireAccount, settingsService: services.settingsService }));
-  app.use(authRouter({ controller, settings, passwords, requireAccount }));
+  app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment, settingsService: services.settingsService }));
+  app.use(authRouter({ controller, settings, passwords, requireAccount, requireAccountOrEnrolment }));
 
   app.use(notFound);
   app.use(errorHandler(logger));
 
+  // Lets graceful shutdown (and tests) wait for background emails to finish.
+  app.set('background', { idle: () => services.passwordService.idle() });
   return app;
 }
 

@@ -127,7 +127,7 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     TOTP_ENC_KEY: TEST_KEYS.totpEncKey,
     ...env,
   });
-  return createApp({
+  const app = createApp({
     config,
     logger: logger || createLogger({ level: 'silent' }),
     db,
@@ -135,6 +135,17 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     hasher: hasher || createHasher(config.bcryptCost),
     delivery,
   });
+  liveApps.add(app);
+  return app;
+}
+
+// Apps built by a test; after each test we wait for their background emails
+// so one test's leftover work never races the next test's TRUNCATE.
+const liveApps = new Set();
+async function settleBackgroundWork() {
+  const apps = [...liveApps];
+  liveApps.clear();
+  await Promise.all(apps.map((app) => app.get('background').idle()));
 }
 
 /**
@@ -213,6 +224,7 @@ module.exports = {
   resetAndSeed,
   listen,
   closeServers,
+  settleBackgroundWork,
   csrfAgent,
   cookieFrom,
   captureDelivery,

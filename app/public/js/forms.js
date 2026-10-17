@@ -60,7 +60,10 @@
               window.location.assign('/verify?method=' + encodeURIComponent(body.method));
               return;
             }
-            if (body.status === 'signed_in') { window.location.assign('/account/security'); return; }
+            if (body.status === 'signed_in' || body.status === 'enrolment_required') {
+              window.location.assign('/account/security');
+              return;
+            }
             var redirect = form.getAttribute('data-redirect');
             if (redirect) { window.location.assign(redirect); return; }
             if (form.hasAttribute('data-reload')) { window.location.reload(); return; }

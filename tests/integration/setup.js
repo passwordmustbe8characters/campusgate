@@ -1,9 +1,12 @@
 'use strict';
 
-const { closeServers } = require('./helpers');
+const { closeServers, settleBackgroundWork } = require('./helpers');
 
 // Real bcrypt + real DB round trips are slower than unit tests.
 jest.setTimeout(60000);
 
-// Close every server a test started with listen()/csrfAgent().
-afterEach(closeServers);
+// After every test: wait for background emails, then close every server it started.
+afterEach(async () => {
+  await settleBackgroundWork();
+  await closeServers();
+});

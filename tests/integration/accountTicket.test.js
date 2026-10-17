@@ -72,14 +72,6 @@ describe('interim account ticket (Phase 2) against real PostgreSQL + Redis', () 
     expect(login.body).toMatchObject({ status: 'second_factor_required', method: 'email' });
   });
 
-  test('admins cannot choose email 2FA (FR-A13: TOTP only)', async () => {
-    // TODO(Phase 2.5): admin sign-in will require TOTP enrolment; update this test then.
-    const { post } = await signedIn('ADMIN0001', PASSWORDS.admin);
-    const res = await post('/auth/2fa/email/enable');
-    expect(res.status).toBe(403);
-    expect(res.body.error).toMatch(/authenticator app/);
-  });
-
   test('the account ticket is NOT accepted by sign-in endpoints', async () => {
     const { post } = await signedIn();
     for (const url of ['/auth/otp', '/auth/otp/resend']) {

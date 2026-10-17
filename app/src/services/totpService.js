@@ -49,8 +49,11 @@ function createTotpService({ db, redis, encKey, hmacKey }) {
   const hashBackup = (userId, code) => keyedHash(hmacKey, 'backup', `${userId}:${code}`);
 
   /** Start enrolment: new secret kept (encrypted) in Redis until confirmed. */
+  // Enrolment is refused only when TOTP is already on; an email-2FA account may switch to TOTP.
+  const hasTotp = (account) => account.two_factor_enabled && account.two_factor_method === 'totp';
+
   async function startEnrolment(account) {
-    if (account.two_factor_enabled) throw new EnrolmentError(409, 'Two-step sign-in is already on.');
+    if (hasTotp(account)) throw new EnrolmentError(409, 'Authenticator app is already on.');
     const secret = generateSecret(); // 20 random bytes, base32
     await redis.set(pendingKey(account.id), encryptForUser(encKey, account.id, secret), 'EX', PENDING_TTL_SEC);
     const uri = generateURI({ issuer: ISSUER, label: account.matric_or_staff_id, secret });
@@ -59,7 +62,7 @@ function createTotpService({ db, redis, encKey, hmacKey }) {
 
   /** Confirm with one valid code: store the secret, turn 2FA on, return 8 backup codes (shown once). */
   async function confirmEnrolment(account, code) {
-    if (account.two_factor_enabled) throw new EnrolmentError(409, 'Two-step sign-in is already on.');
+    if (hasTotp(account)) throw new EnrolmentError(409, 'Authenticator app is already on.');
     const pending = await redis.get(pendingKey(account.id));
     if (!pending) throw new EnrolmentError(400, 'Set-up expired. Start again.');
     const secret = decryptForUser(encKey, account.id, pending);
@@ -70,14 +73,15 @@ function createTotpService({ db, redis, encKey, hmacKey }) {
     const codes = Array.from({ length: BACKUP_COUNT }, generateBackupCode);
     await db.transaction(async (trx) => {
       const updated = await trx('users')
-        .where({ id: account.id, two_factor_enabled: false })
+        .where({ id: account.id })
+        .andWhere((q) => q.whereNull('two_factor_method').orWhere('two_factor_method', '<>', 'totp'))
         .update({
           totp_secret_enc: encryptForUser(encKey, account.id, secret),
           two_factor_enabled: true,
           two_factor_method: 'totp',
           totp_last_step: result.timeStep, // the confirming code cannot be replayed at sign-in
         });
-      if (updated !== 1) throw new EnrolmentError(409, 'Two-step sign-in is already on.');
+      if (updated !== 1) throw new EnrolmentError(409, 'Authenticator app is already on.');
       await trx('totp_backup_codes').where({ user_id: account.id }).del();
       await trx('totp_backup_codes').insert(
         codes.map((c) => ({ user_id: account.id, code_hash: hashBackup(account.id, normalizeBackupCode(c)) })),

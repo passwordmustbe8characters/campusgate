@@ -37,6 +37,16 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/; // 32 bytes, base64url
  */
 function createPasswordService({ db, redis, hasher, delivery, config, tickets, metrics, logger }) {
   const hashToken = (token) => keyedHash(config.tokenHmacKey, 'reset', token);
+
+  // Background work in flight (reset emails, notifications). Graceful shutdown
+  // and tests wait for it with idle().
+  const pending = new Set();
+  const track = (promise) => {
+    pending.add(promise);
+    promise.finally(() => pending.delete(promise)).catch(() => {}); // never an unhandled rejection
+    return promise;
+  };
+  const idle = () => Promise.allSettled([...pending]);
   const emailCooldownKey = (email) => `cg:cooldown:reset:${keyedHash(config.tokenHmacKey, 'reset-email', email)}`;
 
   async function revokeTickets(userId) {
@@ -53,7 +63,7 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
         `The password for ${account.matric_or_staff_id} was just changed (${how}).\n\n` +
         'If this was you, no action is needed. If it was not, reset your password now and contact the ICT help desk.',
     });
-    return send
+    return track(send
       .then(() => {
         log.info({ event: 'password_changed_notice_sent', userId: account.id }, 'password-changed email sent');
       })
@@ -61,7 +71,7 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
         await metrics.incr('notification_email_failures');
         // Logged under `error`, not `err`: pino's err serializer would reshape the scrubbed object.
         log.error({ event: 'password_changed_notice_failed', userId: account.id, error: safeError(err) }, 'password-changed email failed');
-      });
+      }));
   }
 
   async function sendResetEmail(rawEmail, log) {
@@ -110,13 +120,13 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
    * finishes (tests await it; the HTTP handler does not).
    */
   function forgot(email, { log = logger } = {}) {
-    const done = new Promise((resolve) => setImmediate(resolve))
+    const done = track(new Promise((resolve) => setImmediate(resolve))
       .then(() => sendResetEmail(email, log))
       .catch(async (err) => {
         await metrics.incr('reset_email_failures');
         log.error({ event: 'reset_email_failed', error: safeError(err) }, 'reset email could not be sent');
         return 'failed';
-      });
+      }));
     return { done };
   }
 
@@ -179,7 +189,7 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
     return { notified };
   }
 
-  return { forgot, reset, change };
+  return { forgot, reset, change, idle };
 }
 
 module.exports = { createPasswordService, PasswordError };

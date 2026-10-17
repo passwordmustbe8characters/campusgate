@@ -33,10 +33,24 @@ const REDACT_PATHS = [
   ...SECRET_FIELDS.map((field) => `*.${field}`),
 ];
 
+// PostgreSQL errors carry the offending values in `detail` (e.g. "Key (token_hash)=(...)
+// already exists") and sometimes `where`; query bindings may appear as
+// `parameters`/`bindings`. None of these are logged.
+const DB_VALUE_FIELDS = ['detail', 'where', 'parameters', 'bindings', 'internalQuery'];
+
+function errSerializer(err) {
+  // pino-http passes custom serializers an already-serialized error object;
+  // the base logger passes the Error itself. Handle both without re-wrapping.
+  const out = err instanceof Error ? pino.stdSerializers.err(err) : err && typeof err === 'object' ? { ...err } : err;
+  if (out && typeof out === 'object') for (const field of DB_VALUE_FIELDS) delete out[field];
+  return out;
+}
+
 function createLogger({ level = 'info', destination } = {}) {
   return pino(
     {
       level,
+      serializers: { err: errSerializer },
       redact: { paths: REDACT_PATHS, censor: '[REDACTED]' },
       base: { service: 'campusgate', pid: process.pid },
       timestamp: pino.stdTimeFunctions.isoTime,
@@ -45,4 +59,4 @@ function createLogger({ level = 'info', destination } = {}) {
   );
 }
 
-module.exports = { createLogger, REDACT_PATHS };
+module.exports = { createLogger, errSerializer, REDACT_PATHS };

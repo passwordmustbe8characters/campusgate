@@ -10,7 +10,7 @@ const SECOND_FACTOR_METHODS = ['email', 'totp'];
  * Server-rendered pages. Forms submit to the JSON API via public/js/forms.js.
  * Plain and functional on purpose; a UI polish pass comes later.
  */
-function pagesRouter({ db, csrf, requireAccount, settingsService }) {
+function pagesRouter({ db, csrf, requireAccountOrEnrolment, settingsService }) {
   const router = express.Router();
 
   router.get('/', (req, res) => res.redirect('/login'));
@@ -56,12 +56,13 @@ function pagesRouter({ db, csrf, requireAccount, settingsService }) {
   });
 
   // Interim (Phase 2): reached with the account ticket. TODO(Phase 4): use the session.
-  router.get('/account/security', csrf.ensurePreSession, requireAccount, async (req, res) => {
+  router.get('/account/security', csrf.ensurePreSession, requireAccountOrEnrolment, async (req, res) => {
     const [status, policy] = await Promise.all([settingsService.status(req.account.userId), getPolicy(db)]);
     res.render('account-security', {
       title: 'Security settings',
       csrfToken: csrf.generateCsrfToken(req, res),
       status,
+      enrolmentOnly: req.account.scope === 'enrol',
       passwordRules: describePolicy(policy),
     });
   });

@@ -33,15 +33,19 @@ describe('login (FR-A4, FR-A5) against real PostgreSQL', () => {
     expect(byEmail.status).toBe(200);
   });
 
-  test.each([['STAFF0001', 'staff', PASSWORDS.staff], ['ADMIN0001', 'admin', PASSWORDS.admin]])(
-    'seeded %s logs in with role %s',
-    async (identifier, role, password) => {
-      const { post } = await csrfAgent(app);
-      const res = await post('/auth/login', { identifier, password });
-      expect(res.status).toBe(200);
-      expect(res.body.role).toBe(role);
-    },
-  );
+  test('seeded STAFF0001 logs in with role staff', async () => {
+    const { post } = await csrfAgent(app);
+    const res = await post('/auth/login', { identifier: 'STAFF0001', password: PASSWORDS.staff });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ status: 'signed_in', role: 'staff' });
+  });
+
+  test('seeded ADMIN0001 (no TOTP yet) gets past the password but must enrol TOTP (FR-A13, Phase 2)', async () => {
+    const { post } = await csrfAgent(app);
+    const res = await post('/auth/login', { identifier: 'ADMIN0001', password: PASSWORDS.admin });
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('enrolment_required');
+  });
 
   test('success records last_login and resets earlier failures', async () => {
     const { post } = await csrfAgent(app);

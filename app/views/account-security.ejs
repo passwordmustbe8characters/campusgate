@@ -2,13 +2,20 @@
     <h1>Security settings</h1>
     <p class="hint">Signed in as <%= status.matric %> (<%= status.role %>).
       This page stays open for a few minutes only; sign in again if it expires.</p>
+    <% if (enrolmentOnly) { %>
+      <p class="msg msg-error">Administrators must set up an authenticator app before they can sign in.
+        After you finish, sign in again with your authenticator code.</p>
+    <% } %>
 
     <h2>Two-step sign-in</h2>
     <% if (status.twoFactorEnabled) { %>
       <p class="msg msg-ok">On (<%= status.twoFactorMethod === 'totp' ? 'authenticator app' : 'email codes' %>).</p>
     <% } else { %>
       <p>Off.</p>
-      <h3>Use an authenticator app (recommended)</h3>
+    <% } %>
+
+    <% if (!(status.twoFactorEnabled && status.twoFactorMethod === 'totp')) { %>
+      <h3>Use an authenticator app<%= status.role === 'admin' ? ' (required for administrators)' : ' (recommended)' %></h3>
       <form data-api="/auth/totp/enrol" novalidate>
         <button type="submit">Set up authenticator app</button>
         <p class="msg" data-message role="status" aria-live="polite"></p>
@@ -25,36 +32,37 @@
         <p class="msg" data-message role="status" aria-live="polite"></p>
         <ol data-backup-codes hidden></ol>
       </form>
-      <% if (status.role !== 'admin') { %>
-        <h3>Or use email codes</h3>
-        <form data-api="/auth/2fa/email/enable" novalidate>
-          <button type="submit">Send me a code</button>
-          <p class="msg" data-message role="status" aria-live="polite"></p>
-        </form>
-        <form data-api="/auth/2fa/email/confirm" data-reload novalidate>
-          <label for="emailCode">Code from the email</label>
-          <input id="emailCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
-          <p class="field-error" data-error-for="code"></p>
-          <button type="submit">Turn on email codes</button>
-          <p class="msg" data-message role="status" aria-live="polite"></p>
-        </form>
-      <% } else { %>
-        <p class="msg msg-error">Administrators must use an authenticator app before using the admin console.</p>
-      <% } %>
     <% } %>
 
-    <h2>Change password</h2>
-    <form data-api="/auth/password/change" data-redirect="/login" novalidate>
-      <label for="currentPassword">Current password</label>
-      <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
-      <p class="field-error" data-error-for="currentPassword"></p>
-      <label for="newPassword">New password</label>
-      <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" required>
-      <ul class="rules">
-        <% passwordRules.forEach(function (rule) { %><li><%= rule %></li><% }) %>
-      </ul>
-      <p class="field-error" data-error-for="newPassword"></p>
-      <button type="submit">Change password</button>
-      <p class="msg" data-message role="status" aria-live="polite"></p>
-    </form>
+    <% if (!status.twoFactorEnabled && status.role !== 'admin' && !enrolmentOnly) { %>
+      <h3>Or use email codes</h3>
+      <form data-api="/auth/2fa/email/enable" novalidate>
+        <button type="submit">Send me a code</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+      <form data-api="/auth/2fa/email/confirm" data-reload novalidate>
+        <label for="emailCode">Code from the email</label>
+        <input id="emailCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+        <p class="field-error" data-error-for="code"></p>
+        <button type="submit">Turn on email codes</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+    <% } %>
+
+    <% if (!enrolmentOnly) { %>
+      <h2>Change password</h2>
+      <form data-api="/auth/password/change" data-redirect="/login" novalidate>
+        <label for="currentPassword">Current password</label>
+        <input id="currentPassword" name="currentPassword" type="password" autocomplete="current-password" required>
+        <p class="field-error" data-error-for="currentPassword"></p>
+        <label for="newPassword">New password</label>
+        <input id="newPassword" name="newPassword" type="password" autocomplete="new-password" required>
+        <ul class="rules">
+          <% passwordRules.forEach(function (rule) { %><li><%= rule %></li><% }) %>
+        </ul>
+        <p class="field-error" data-error-for="newPassword"></p>
+        <button type="submit">Change password</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+    <% } %>
 <%- include('partials/bottom') %>

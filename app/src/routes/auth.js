@@ -84,7 +84,7 @@ const resetRules = [
 
 const changeRules = [passwordField('currentPassword'), passwordField('newPassword')];
 
-function authRouter({ controller, settings, passwords, requireAccount }) {
+function authRouter({ controller, settings, passwords, requireAccount, requireAccountOrEnrolment }) {
   const router = express.Router();
   router.post('/auth/register', registerRules, validate, controller.register);
   router.post('/auth/login', loginRules, validate, controller.login);
@@ -105,8 +105,9 @@ function authRouter({ controller, settings, passwords, requireAccount }) {
   // Security settings: interim account ticket required (see ACCOUNT_TICKET_ROUTES).
   router.post('/auth/2fa/email/enable', requireAccount, settings.startEmail2fa);
   router.post('/auth/2fa/email/confirm', requireAccount, sixDigitCode(), validate, settings.confirmEmail2fa);
-  router.post('/auth/totp/enrol', requireAccount, settings.startTotp);
-  router.post('/auth/totp/enrol/confirm', requireAccount, sixDigitCode(), validate, settings.confirmTotp);
+  // TOTP enrolment also accepts the enrolment-only ticket (admin without TOTP, FR-A13).
+  router.post('/auth/totp/enrol', requireAccountOrEnrolment, settings.startTotp);
+  router.post('/auth/totp/enrol/confirm', requireAccountOrEnrolment, sixDigitCode(), validate, settings.confirmTotp);
   router.post('/auth/password/change', requireAccount, changeRules, validate, passwords.change);
 
   // Password recovery (no ticket: the emailed token is the proof).

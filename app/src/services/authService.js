@@ -100,6 +100,7 @@ function createAuthService({ db, hasher, logger }) {
    *   { ok: false, reason, policy }                       any failure (identical 401 to the client)
    *   { ok: true, status: 'signed_in', user }              no second factor needed
    *   { ok: true, status: 'second_factor_required', user } 2FA account: password correct, second factor pending
+   *   { ok: true, status: 'enrolment_required', user }     admin without TOTP: may only enrol (FR-A13)
    * For 2FA accounts a correct password does NOT reset the failure counter;
    * only a completed second factor does, so knowing the password does not
    * give unlimited code guesses.
@@ -124,6 +125,11 @@ function createAuthService({ db, hasher, logger }) {
     }
 
     const summary = { id: user.id, role: user.role, method: user.two_factor_method };
+    // FR-A13: an admin without TOTP cannot sign in; they may only enrol TOTP.
+    if (user.role === 'admin' && !(user.two_factor_enabled && user.two_factor_method === 'totp')) {
+      log.info({ event: 'admin_totp_enrolment_required', userId: user.id }, 'admin must enrol TOTP');
+      return { ok: true, status: 'enrolment_required', user: summary };
+    }
     if (user.two_factor_enabled) {
       log.info({ event: 'password_ok_second_factor_pending', userId: user.id, method: user.two_factor_method }, 'second factor required');
       return { ok: true, status: 'second_factor_required', user: summary };

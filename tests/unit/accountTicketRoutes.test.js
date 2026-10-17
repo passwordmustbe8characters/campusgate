@@ -1,7 +1,7 @@
 'use strict';
 
 const { buildTestApp } = require('./helpers');
-const { ACCOUNT_TICKET_ROUTES } = require('../../app/src/middleware/tickets');
+const { ACCOUNT_TICKET_ROUTES, ENROLMENT_ROUTES } = require('../../app/src/middleware/tickets');
 
 /** Walk Express's router tree and list "METHOD /path" for every route whose handlers include fn(layer). */
 function routesWhere(app, predicate) {
@@ -27,6 +27,12 @@ describe('interim account ticket is accepted ONLY by the listed security-setting
     const app = buildTestApp();
     const using = routesWhere(app, (fn) => fn.acceptsAccountTicket === true);
     expect(using).toEqual([...ACCOUNT_TICKET_ROUTES].sort());
+  });
+
+  test('enrolment-only tickets (admin without TOTP) are accepted ONLY by the TOTP enrolment routes and the page', () => {
+    const app = buildTestApp();
+    const using = routesWhere(app, (fn) => fn.acceptsAccountTicket === true && fn.allowsEnrolment === true);
+    expect(using).toEqual([...ENROLMENT_ROUTES].sort());
   });
 
   test('no global (app-level) middleware accepts the account ticket', () => {

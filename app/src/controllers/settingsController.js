@@ -1,7 +1,7 @@
 'use strict';
 
 /** Security-settings endpoints. Every route here sits behind requireAccountTicket. */
-function createSettingsController({ settingsService }) {
+function createSettingsController({ settingsService, accountTickets, cookies }) {
   async function startEmail2fa(req, res) {
     await settingsService.startEmail2fa(req.account.userId, { log: req.log });
     res.status(200).json({ message: 'We sent a 6-digit code to your email. Enter it to turn on two-step sign-in.' });
@@ -25,10 +25,14 @@ function createSettingsController({ settingsService }) {
   async function confirmTotp(req, res) {
     const { backupCodes } = await settingsService.confirmTotp(req.account.userId, req.body.code, { log: req.log });
     res.set('Cache-Control', 'no-store');
-    res.status(200).json({
-      message: 'Authenticator app is on. Save these backup codes now: each works once, and they will not be shown again.',
-      backupCodes,
-    });
+    let message = 'Authenticator app is on. Save these backup codes now: each works once, and they will not be shown again.';
+    if (req.account.scope === 'enrol') {
+      // Enrolment-only ticket (admin): done with it. Sign in again, now with TOTP.
+      await accountTickets.revokeUser(req.account.userId);
+      cookies.clearAccount(res);
+      message += ' Then sign in again with your authenticator code.';
+    }
+    res.status(200).json({ message, backupCodes });
   }
 
   return { startEmail2fa, confirmEmail2fa, startTotp, confirmTotp };
