@@ -11,20 +11,64 @@ const { healthRouter } = require('./routes/health');
 const { authRouter } = require('./routes/auth');
 const { pagesRouter } = require('./routes/pages');
 const { createCsrf } = require('./middleware/csrf');
+const { ticketCookies, requireAccountTicket } = require('./middleware/tickets');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
 const { createAuthService } = require('./services/authService');
+const { createTicketStore } = require('./services/tickets');
+const { createDelivery } = require('./services/delivery');
+const { createOtpService } = require('./services/otpService');
+const { createSecondFactorService } = require('./services/secondFactorService');
+const { createAccountSettingsService } = require('./services/accountSettingsService');
 const { createAuthController } = require('./controllers/authController');
+const { createSettingsController } = require('./controllers/settingsController');
+
+/** Wire services together. Exposed separately so scripts and tests can reuse it. */
+function createServices({ config, logger, db, redis, hasher, delivery }) {
+  const preauthTickets = createTicketStore({
+    redis, hmacKey: config.tokenHmacKey, kind: 'preauth', ttlSec: config.preauthTtlSec,
+  });
+  // TODO(Phase 4): delete the interim account ticket; use the JWT session.
+  const accountTickets = createTicketStore({
+    redis, hmacKey: config.tokenHmacKey, kind: 'acct', ttlSec: config.accountTicketTtlMin * 60,
+  });
+  const otp = createOtpService({
+    db, redis, delivery, hmacKey: config.tokenHmacKey, cooldownSec: config.otpResendCooldownSec,
+  });
+  const secondFactor = createSecondFactorService({
+    db, preauthTickets, otp, maxAttempts: config.preauthMaxAttempts, logger,
+  });
+  return {
+    preauthTickets,
+    accountTickets,
+    otp,
+    secondFactor,
+    authService: createAuthService({ db, hasher, logger }),
+    settingsService: createAccountSettingsService({ db, otp, logger }),
+  };
+}
 
 /**
  * Build the Express app. Dependencies are passed in (not imported) so tests can
  * supply fakes and so each cluster worker owns its own connections.
  */
-function createApp({ config, logger, db, redis, hasher = createHasher(config.bcryptCost) }) {
+function createApp({
+  config,
+  logger,
+  db,
+  redis,
+  hasher = createHasher(config.bcryptCost),
+  delivery = createDelivery(config, { redis }),
+}) {
   const app = express();
   const csrf = createCsrf(config);
-  const authController = createAuthController(createAuthService({ db, hasher, logger }));
+  const cookies = ticketCookies(config);
+  const services = createServices({ config, logger, db, redis, hasher, delivery });
+  const requireAccount = requireAccountTicket({ accountTickets: services.accountTickets, cookies });
+
+  const controller = createAuthController({ ...services, cookies });
+  const settings = createSettingsController(services);
 
   app.set('views', path.join(__dirname, '..', 'views'));
   app.set('view engine', 'ejs');
@@ -50,8 +94,8 @@ function createApp({ config, logger, db, redis, hasher = createHasher(config.bcr
 
   // Every non-GET/HEAD/OPTIONS request below this line needs a valid CSRF token.
   app.use(csrf.doubleCsrfProtection);
-  app.use(pagesRouter({ db, csrf }));
-  app.use(authRouter(authController));
+  app.use(pagesRouter({ db, csrf, requireAccount, settingsService: services.settingsService }));
+  app.use(authRouter({ controller, settings, requireAccount }));
 
   app.use(notFound);
   app.use(errorHandler(logger));
@@ -59,4 +103,4 @@ function createApp({ config, logger, db, redis, hasher = createHasher(config.bcr
   return app;
 }
 
-module.exports = { createApp };
+module.exports = { createApp, createServices };

@@ -54,11 +54,32 @@ const loginRules = [
     .withMessage('Password is too long.'),
 ];
 
-function authRouter(controller) {
+// otplib throws on anything that is not exactly 6 digits, so check the shape first.
+const sixDigitCode = (name = 'code') =>
+  body(name)
+    .isString().withMessage('Enter the 6-digit code.')
+    .bail()
+    .trim()
+    .matches(/^\d{6}$/).withMessage('Enter the 6-digit code.');
+
+/**
+ * @param controller          auth controller (login, second factor)
+ * @param settings            security-settings controller (account ticket only)
+ * @param requireAccount      the ONE middleware that accepts the interim account ticket
+ */
+function authRouter({ controller, settings, requireAccount }) {
   const router = express.Router();
   router.post('/auth/register', registerRules, validate, controller.register);
   router.post('/auth/login', loginRules, validate, controller.login);
+
+  // Second step of sign-in (pre-auth ticket cookie).
+  router.post('/auth/otp', sixDigitCode(), validate, controller.verifySecondFactor('email', 'code'));
+  router.post('/auth/otp/resend', controller.resendOtp);
+
+  // Security settings: interim account ticket required (see ACCOUNT_TICKET_ROUTES).
+  router.post('/auth/2fa/email/enable', requireAccount, settings.startEmail2fa);
+  router.post('/auth/2fa/email/confirm', requireAccount, sixDigitCode(), validate, settings.confirmEmail2fa);
   return router;
 }
 
-module.exports = { authRouter };
+module.exports = { authRouter, sixDigitCode };

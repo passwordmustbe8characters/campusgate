@@ -1,0 +1,28 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Security settings</h1>
+    <p class="hint">Signed in as <%= status.matric %> (<%= status.role %>).
+      This page stays open for a few minutes only; sign in again if it expires.</p>
+
+    <h2>Two-step sign-in</h2>
+    <% if (status.twoFactorEnabled) { %>
+      <p class="msg msg-ok">On (<%= status.twoFactorMethod === 'totp' ? 'authenticator app' : 'email codes' %>).</p>
+    <% } else { %>
+      <p>Off.</p>
+      <% if (status.role !== 'admin') { %>
+        <h3>Use email codes</h3>
+        <form data-api="/auth/2fa/email/enable" novalidate>
+          <button type="submit">Send me a code</button>
+          <p class="msg" data-message role="status" aria-live="polite"></p>
+        </form>
+        <form data-api="/auth/2fa/email/confirm" data-reload novalidate>
+          <label for="emailCode">Code from the email</label>
+          <input id="emailCode" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+          <p class="field-error" data-error-for="code"></p>
+          <button type="submit">Turn on email codes</button>
+          <p class="msg" data-message role="status" aria-live="polite"></p>
+        </form>
+      <% } else { %>
+        <p class="msg msg-error">Administrators must turn on an authenticator app before using the admin console.</p>
+      <% } %>
+    <% } %>
+<%- include('partials/bottom') %>

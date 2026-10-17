@@ -51,6 +51,33 @@ describe('overload errors', () => {
   });
 });
 
+describe('dependency outages and public messages', () => {
+  const appThrowing = (err) => {
+    const app = express();
+    app.get('/x', async () => { throw err; });
+    app.use(errorHandler(createLogger({ level: 'silent' })));
+    return app;
+  };
+
+  test.each([
+    ['MaxRetriesPerRequestError', 'Reached the max retries per request limit (which is 1).'],
+    ['Error', 'Connection is closed.'],
+  ])('a Redis outage (%s: %s) returns 503', async (name, message) => {
+    const res = await request(appThrowing(Object.assign(new Error(message), { name }))).get('/x');
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('Service Unavailable');
+  });
+
+  test('publicMessage and Retry-After are passed through; internal message is not', async () => {
+    const err = Object.assign(new Error('internal detail'), { status: 429, publicMessage: 'Please wait 42 s.', retryAfterSec: 42 });
+    const res = await request(appThrowing(err)).get('/x');
+    expect(res.status).toBe(429);
+    expect(res.headers['retry-after']).toBe('42');
+    expect(res.body.error).toBe('Please wait 42 s.');
+    expect(res.text).not.toContain('internal detail');
+  });
+});
+
 describe('security headers (NFR-1)', () => {
   test('helmet headers are set and X-Powered-By is removed', async () => {
     const res = await request(buildTestApp()).get('/health');

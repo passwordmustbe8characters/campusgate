@@ -5,8 +5,8 @@ const { loadEnvFile } = require('../../app/src/config');
 loadEnvFile();
 
 const HOW_TO_START =
-  'Integration tests need the PostgreSQL and Redis containers from docker compose.\n' +
-  'Start them with:  docker compose up -d postgres redis\n' +
+  'Integration tests need the PostgreSQL, Redis and Mailpit containers from docker compose.\n' +
+  'Start them with:  docker compose up -d postgres redis mailpit\n' +
   'and make sure .env has DATABASE_URL and REDIS_URL pointing at localhost.';
 
 /**

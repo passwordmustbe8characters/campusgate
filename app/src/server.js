@@ -5,6 +5,7 @@ const { createLogger } = require('./logger');
 const { createDb } = require('./db/knex');
 const { createRedis } = require('./db/redis');
 const { createHasher } = require('./services/passwordHasher');
+const { createDelivery } = require('./services/delivery');
 const { createApp } = require('./app');
 
 loadEnvFile();
@@ -27,7 +28,15 @@ async function main() {
   // login is not slower than the rest.
   await hasher.dummyHash();
 
-  const app = createApp({ config, logger, db, redis, hasher });
+  const delivery = createDelivery(config, { redis });
+  if (delivery.name === 'console') {
+    logger.warn(
+      { otpDeliveryDriver: 'console' },
+      'OTP_DELIVERY_DRIVER=console: one-time codes and links are printed to stdout. Development/test only.',
+    );
+  }
+
+  const app = createApp({ config, logger, db, redis, hasher, delivery });
 
   const server = app.listen(config.port, () => {
     logger.info(
@@ -36,6 +45,7 @@ async function main() {
         nodeEnv: config.nodeEnv,
         uvThreadpoolSize: config.uvThreadpoolSize,
         bcryptCost: config.bcryptCost,
+        otpDeliveryDriver: delivery.name,
       },
       'CampusGate listening',
     );
@@ -49,7 +59,7 @@ async function main() {
     const forceExit = setTimeout(() => process.exit(1), 10000).unref();
     try {
       await new Promise((resolve) => server.close(resolve));
-      await Promise.allSettled([db.destroy(), redis.quit()]);
+      await Promise.allSettled([db.destroy(), redis.quit(), delivery.close && delivery.close()]);
       clearTimeout(forceExit);
       process.exit(0);
     } catch (err) {

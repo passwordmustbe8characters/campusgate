@@ -27,7 +27,7 @@ describe('login (FR-A4, FR-A5) against real PostgreSQL', () => {
     const { post } = await csrfAgent(app);
     const byMatric = await post('/auth/login', { identifier: ` ${student.matric_no.toLowerCase()} `, password: PASSWORDS.student });
     expect(byMatric.status).toBe(200);
-    expect(byMatric.body).toEqual({ message: 'Signed in.', role: 'student' });
+    expect(byMatric.body).toEqual({ status: 'signed_in', message: 'Signed in.', role: 'student' });
 
     const byEmail = await post('/auth/login', { identifier: student.email.toUpperCase(), password: PASSWORDS.student });
     expect(byEmail.status).toBe(200);

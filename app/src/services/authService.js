@@ -3,6 +3,7 @@
 const { getPolicy } = require('../policies/policyRepo');
 const { checkPassword } = require('./passwordPolicy');
 const { normalizeId, normalizeEmail, looksLikeEmail } = require('./identity');
+const { recordFailure, completeLogin, logFailure } = require('./accountState');
 
 const UNIQUE_VIOLATION = '23505';
 const REJECTED = Object.freeze({ ok: false, kind: 'rejected' });
@@ -86,6 +87,8 @@ function createAuthService({ db, hasher, logger }) {
         'users.id',
         'users.password_hash',
         'users.is_active',
+        'users.two_factor_enabled',
+        'users.two_factor_method',
         'roles.name as role',
         // Compare against the DB clock so app/DB clock skew cannot matter.
         db.raw('(users.locked_until IS NOT NULL AND users.locked_until > now()) AS is_locked'),
@@ -93,26 +96,14 @@ function createAuthService({ db, hasher, logger }) {
   }
 
   /**
-   * Count one credential failure atomically. Concurrent failures serialize on
-   * the row lock; the WHERE clause re-checks the lock, so once an account is
-   * locked, further concurrent failures are not counted.
+   * Password step. Returns one of:
+   *   { ok: false, reason, policy }                       any failure (identical 401 to the client)
+   *   { ok: true, status: 'signed_in', user }              no second factor needed
+   *   { ok: true, status: 'second_factor_required', user } 2FA account: password correct, second factor pending
+   * For 2FA accounts a correct password does NOT reset the failure counter;
+   * only a completed second factor does, so knowing the password does not
+   * give unlimited code guesses.
    */
-  async function recordFailure(userId, policy) {
-    const { rows } = await db.raw(
-      `UPDATE users SET
-         failed_attempts = CASE WHEN locked_until IS NOT NULL THEN 1 ELSE failed_attempts + 1 END,
-         locked_until = CASE
-           WHEN (CASE WHEN locked_until IS NOT NULL THEN 1 ELSE failed_attempts + 1 END) >= ?::int
-             THEN now() + make_interval(mins => ?::int)
-           ELSE NULL
-         END
-       WHERE id = ? AND (locked_until IS NULL OR locked_until <= now())
-       RETURNING failed_attempts, locked_until`,
-      [policy.max_attempts, policy.lockout_minutes, userId],
-    );
-    return rows[0] || null;
-  }
-
   async function login({ identifier, password }, { log = logger } = {}) {
     const policy = await getPolicy(db);
     const user = await findForLogin(identifier);
@@ -127,25 +118,20 @@ function createAuthService({ db, hasher, logger }) {
 
     const matches = await hasher.compare(password, user.password_hash);
     if (!matches) {
-      const result = await recordFailure(user.id, policy);
-      const lockedNow = Boolean(result && result.locked_until);
-      log.info(
-        { event: 'login_failure', reason: 'bad_password', userId: user.id, failedAttempts: result && result.failed_attempts },
-        'login failed',
-      );
-      if (lockedNow) {
-        log.warn({ event: 'lockout', userId: user.id, lockedUntil: result.locked_until }, 'account locked');
-      }
+      const result = await recordFailure(db, user.id, policy);
+      logFailure(log, user.id, result, { reason: 'bad_password' });
       return { ok: false, reason: 'bad_password', policy };
     }
 
-    await db('users').where({ id: user.id }).update({
-      failed_attempts: 0,
-      locked_until: null,
-      last_login: db.fn.now(),
-    });
+    const summary = { id: user.id, role: user.role, method: user.two_factor_method };
+    if (user.two_factor_enabled) {
+      log.info({ event: 'password_ok_second_factor_pending', userId: user.id, method: user.two_factor_method }, 'second factor required');
+      return { ok: true, status: 'second_factor_required', user: summary };
+    }
+
+    await completeLogin(db, user.id);
     log.info({ event: 'login_success', userId: user.id, role: user.role }, 'login succeeded');
-    return { ok: true, user: { id: user.id, role: user.role } };
+    return { ok: true, status: 'signed_in', user: summary };
   }
 
   return { register, login };

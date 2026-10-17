@@ -43,11 +43,24 @@
           });
         })
         .then(function (result) {
+          var body = result.body;
           if (result.ok) {
+            // Sign-in flow: follow the status the server returns.
+            if (body.status === 'second_factor_required') {
+              window.location.assign('/verify?method=' + encodeURIComponent(body.method));
+              return;
+            }
+            if (body.status === 'signed_in') { window.location.assign('/account/security'); return; }
             var redirect = form.getAttribute('data-redirect');
             if (redirect) { window.location.assign(redirect); return; }
-            setText(message, result.body.message || 'Done.', 'ok');
+            if (form.hasAttribute('data-reload')) { window.location.reload(); return; }
+            setText(message, body.message || 'Done.', 'ok');
             form.reset();
+            return;
+          }
+          if (body.restart) {
+            setText(message, body.error, 'error');
+            setTimeout(function () { window.location.assign('/login'); }, 1500);
             return;
           }
           var fields = result.body.fields || {};

@@ -1,0 +1,35 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Two-step sign-in</h1>
+    <% if (method === 'email') { %>
+      <p class="hint">We sent a 6-digit code to your email. It expires in 5 minutes.</p>
+      <form data-api="/auth/otp" novalidate>
+        <label for="code">Code</label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+        <p class="field-error" data-error-for="code"></p>
+        <button type="submit">Verify</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+      <form data-api="/auth/otp/resend" novalidate>
+        <button type="submit">Resend code</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+    <% } else { %>
+      <p class="hint">Enter the 6-digit code from your authenticator app.</p>
+      <form data-api="/auth/totp/verify" novalidate>
+        <label for="code">Authenticator code</label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+        <p class="field-error" data-error-for="code"></p>
+        <button type="submit">Verify</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+      <p class="hint">Lost your phone? Use one of your backup codes.</p>
+      <form data-api="/auth/totp/verify" novalidate>
+        <label for="backupCode">Backup code</label>
+        <input id="backupCode" name="backupCode" autocomplete="off" maxlength="11" placeholder="XXXXX-XXXXX" required>
+        <p class="field-error" data-error-for="backupCode"></p>
+        <button type="submit">Use backup code</button>
+        <p class="msg" data-message role="status" aria-live="polite"></p>
+      </form>
+    <% } %>
+    <p class="alt"><a href="/login">Start again</a></p>
+<%- include('partials/bottom') %>

@@ -30,6 +30,24 @@ services:
       timeout: 3s
       retries: 10
 
+  # Development mail catcher: every email the app sends lands here, nothing leaves the machine.
+  # Web UI: http://localhost:8025   SMTP: 1025 (localhost only, no auth).
+  mailpit:
+    image: axllent/mailpit:v1.31.3
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    ports:
+      - "127.0.0.1:8025:8025" # web UI and REST API
+      - "127.0.0.1:1025:1025" # SMTP, so host runs and integration tests can send too
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   app:
     build: .
     restart: unless-stopped
@@ -38,6 +56,8 @@ services:
       # Override the host URLs from .env with the in-network service names.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      SMTP_HOST: mailpit
+      SMTP_PORT: 1025
       PORT: 3000
     ports:
       - "${PORT:-3000}:3000"
@@ -45,6 +65,8 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      mailpit:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

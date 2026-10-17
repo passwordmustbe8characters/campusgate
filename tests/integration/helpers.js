@@ -11,6 +11,7 @@ const { loadConfig } = require('../../app/src/config');
 const { createLogger } = require('../../app/src/logger');
 const { createApp } = require('../../app/src/app');
 const { createHasher } = require('../../app/src/services/passwordHasher');
+const { DeliveryError } = require('../../app/src/services/delivery');
 const { seedAll } = require('../../db/seed/lib/seedAll');
 const { generateStudents, studentEmail } = require('../../db/seed/lib/studentData');
 const { testUrls } = require('./testEnv');
@@ -56,8 +57,53 @@ function captureLogs() {
   return { lines, logger: createLogger({ level: 'info', destination }) };
 }
 
+/**
+ * In-memory delivery driver: records every message so tests can read codes.
+ * Registered as 'console' (an allowed otp_codes.channel); prints nothing.
+ */
+function captureDelivery({ fail = false } = {}) {
+  const sent = [];
+  return {
+    name: 'console',
+    sent,
+    async send(message) {
+      if (fail) throw new DeliveryError('console delivery failed', new Error('simulated delivery failure'));
+      sent.push(message);
+    },
+    lastCode() {
+      const match = /code is: (\d{6})/.exec((sent[sent.length - 1] || {}).text || '');
+      return match && match[1];
+    },
+  };
+}
+
+const MAILPIT_URL = process.env.MAILPIT_URL || 'http://127.0.0.1:8025';
+const mailpit = {
+  url: MAILPIT_URL,
+  async clear() {
+    await fetch(`${MAILPIT_URL}/api/v1/messages`, { method: 'DELETE' });
+  },
+  /** Wait for the newest message to an address and return its full body. */
+  async latestTo(address, { timeoutMs = 10000 } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const res = await fetch(`${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:"${address}"`)}&limit=1`);
+      const { messages } = await res.json();
+      if (messages && messages.length > 0) {
+        return (await fetch(`${MAILPIT_URL}/api/v1/message/${messages[0].ID}`)).json();
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    throw new Error(`no email to ${address} within ${timeoutMs} ms`);
+  },
+};
+
+/** Turn on email 2FA for a seeded user directly in the DB. */
+const enableEmail2fa = (db, matric) =>
+  db('users').where({ matric_or_staff_id: matric }).update({ two_factor_enabled: true, two_factor_method: 'email' });
+
 /** Real app against the test PostgreSQL database and Redis DB 15. */
-function buildRealApp({ db, redis, hasher, env = {}, logger } = {}) {
+function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureDelivery() } = {}) {
   const { databaseUrl, redisUrl } = testUrls();
   const config = loadConfig({
     NODE_ENV: 'test',
@@ -75,6 +121,7 @@ function buildRealApp({ db, redis, hasher, env = {}, logger } = {}) {
     db,
     redis,
     hasher: hasher || createHasher(config.bcryptCost),
+    delivery,
   });
 }
 
@@ -129,8 +176,14 @@ async function csrfAgent(app) {
   const agent = request.agent(await listen(app));
   const page = await agent.get('/login');
   const token = /name="csrf-token" content="([^"]+)"/.exec(page.text)[1];
-  const post = (url, body) => agent.post(url).set('X-CSRF-Token', token).send(body);
+  const post = (url, body = {}) => agent.post(url).set('X-CSRF-Token', token).send(body);
   return { agent, token, post };
+}
+
+/** Value of a cookie set by a response (or undefined). */
+function cookieFrom(res, name) {
+  const header = (res.headers['set-cookie'] || []).find((c) => c.startsWith(`${name}=`));
+  return header ? decodeURIComponent(header.split(';')[0].slice(name.length + 1)) : undefined;
 }
 
 const userRow = (db, matric) => db('users').where({ matric_or_staff_id: matric }).first();
@@ -149,5 +202,9 @@ module.exports = {
   listen,
   closeServers,
   csrfAgent,
+  cookieFrom,
+  captureDelivery,
+  mailpit,
+  enableEmail2fa,
   userRow,
 };
