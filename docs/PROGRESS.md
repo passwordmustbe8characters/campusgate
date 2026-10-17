@@ -325,6 +325,24 @@ npm test                                        # unit + integration; needs: doc
 ```
 Demo logins after seeding: any of the first 1,500 seeded matric numbers (for example `SCI/2025/0001`), `STAFF0001` or `ADMIN0001`, with the passwords from your `.env` (`SEED_*_PASSWORD`). Free records for the registration demo start at `SCI/2025/0061` (see `db/seed/lib/studentData.js`, records 1,501–2,000).
 
+### Follow-up: test-output noise (2026-10-17)
+The developer reported three things during `npm test`. Findings:
+- **Six "Acquire connection error: operation timed out" lines:** all six come from **one deliberate FR-P5 test**, "a DB connection timeout (pool exhausted) returns 503…" in `lockout.test.js`. That test holds the only connection of a 1-connection pool and sends 6 logins with a 300 ms acquire timeout, so knex prints one warning per login.
+  - Confirmed by running each test alone: that test prints 6 warnings; the 10-concurrent-logins test and every normal-login test print 0.
+  - **Fix:** the test now captures knex's warnings itself (knex's `log.warn` option) instead of letting them reach the console. It also **asserts that the injected failure happened**: exactly 6 acquire-timeout warnings and 6 logged `KnexTimeoutError`s.
+  - The bcrypt-failure test now likewise asserts that its injected `compare` failure ran 6 times and was logged 6 times.
+- **MaxListenersExceededWarning (11 listeners on a Server):** from the 10-concurrent-logins test.
+  - When supertest is given a bare Express app, it starts its own server, and every request sent while that server is still starting adds a one-time `listening` and `error` listener. Ten concurrent requests plus supertest's own listener made 11. It was not a leak in the app.
+  - **Fix:** integration tests now start a real listening server (`listen()` in `tests/integration/helpers.js`), and a global `afterEach` closes every server a test opened.
+- **Lockout suite duration (19.6 s vs 43.8 s):** not reproduced.
+  - In 4 runs the suite took **12.4, 15.6, 13.3 and 13.0 s**; the full `npm test` took 60–68 s wall clock.
+  - Two tests account for most of the time:
+    - the admin-CLI test, 6.2–7.7 s, because it starts 5 separate Node processes;
+    - the pool-exhaustion test, 2.0–2.5 s by design (6 × 300 ms timeouts).
+  - The concurrency test took 0.7–1.2 s. These tests use bcrypt cost 4, so thread-pool contention is not a factor.
+  - The 43.8 s run was most likely machine load (Windows process start-up for the CLI test, or the Docker VM competing for 4 CPUs). Nothing was changed for timing.
+- **Result:** two full `npm test` runs after the fix both passed (unit 70, integration 43), with **0** acquire-timeout lines, **0** MaxListeners warnings, and **0** console output blocks.
+
 ### What to screenshot
 - `/register` on a phone-width browser, showing the password rules and the privacy notice.
 - A rejected registration (generic message) and a weak-password error.

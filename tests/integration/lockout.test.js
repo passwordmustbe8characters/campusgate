@@ -136,20 +136,45 @@ describe('temporary lockout (FR-A6, FR-P5) against real PostgreSQL', () => {
   });
 
   describe('FR-P5: system failures never count toward lockout', () => {
+    const errorLogs = (lines) => lines.map((l) => JSON.parse(l)).filter((l) => l.msg === 'unhandled error');
+
     test('a bcrypt failure/timeout returns 500 and does not increment the counter', async () => {
       const real = createHasher(4);
-      const failing = { ...real, compare: async () => { throw new Error('simulated hashing timeout'); } };
-      const { post } = await csrfAgent(buildRealApp({ db, redis, hasher: failing }));
+      let injected = 0;
+      const failing = {
+        ...real,
+        compare: async () => {
+          injected += 1;
+          throw new Error('simulated hashing timeout');
+        },
+      };
+      const { lines, logger } = captureLogs();
+      const { post } = await csrfAgent(buildRealApp({ db, redis, hasher: failing, logger }));
 
       for (let i = 0; i < 6; i += 1) expect((await login(post)).status).toBe(500);
+
+      // The injected failure really happened, once per request, and was logged as a server error.
+      expect(injected).toBe(6);
+      const errors = errorLogs(lines);
+      expect(errors).toHaveLength(6);
+      expect(errors.every((e) => e.err.message === 'simulated hashing timeout')).toBe(true);
+
       const row = await userRow(db, student.matric_no);
       expect(row.failed_attempts).toBe(0);
       expect(row.locked_until).toBeNull();
     });
 
     test('a DB connection timeout (pool exhausted) returns 503 and does not increment the counter', async () => {
-      const tinyDb = connectDb({ pool: { min: 0, max: 1 }, acquireConnectionTimeout: 300 });
-      const { post } = await csrfAgent(buildRealApp({ db: tinyDb, redis }));
+      // knex reports each acquire timeout through its own logger (console.log by default).
+      // Capture it here: this noise is the expected result of the injected failure.
+      const knexWarnings = [];
+      const tinyDb = connectDb({
+        pool: { min: 0, max: 1 },
+        acquireConnectionTimeout: 300,
+        log: { warn: (message) => knexWarnings.push(String(message)) },
+      });
+      const { lines, logger } = captureLogs();
+      const { post } = await csrfAgent(buildRealApp({ db: tinyDb, redis, logger }));
       const trx = await tinyDb.transaction(); // hold the only connection
       try {
         for (let i = 0; i < 6; i += 1) expect((await login(post)).status).toBe(503);
@@ -157,6 +182,14 @@ describe('temporary lockout (FR-A6, FR-P5) against real PostgreSQL', () => {
         await trx.rollback();
         await tinyDb.destroy();
       }
+
+      // The injected failure really happened: 6 pool-acquire timeouts, each surfacing as KnexTimeoutError.
+      expect(knexWarnings).toHaveLength(6);
+      expect(knexWarnings.every((w) => /Acquire connection error: .*timed out/.test(w))).toBe(true);
+      const errors = errorLogs(lines);
+      expect(errors).toHaveLength(6);
+      expect(errors.every((e) => e.err.type === 'KnexTimeoutError')).toBe(true);
+
       const row = await userRow(db, student.matric_no);
       expect(row.failed_attempts).toBe(0);
       expect(row.locked_until).toBeNull();

@@ -1,5 +1,6 @@
 'use strict';
 
+const http = require('node:http');
 const path = require('node:path');
 const { Writable } = require('node:stream');
 const knex = require('knex');
@@ -92,9 +93,33 @@ async function resetAndSeed(db, seed = SMALL_SEED) {
   });
 }
 
+// Servers started by listen(); closed after every test by tests/integration/setup.js.
+const openServers = new Set();
+
+/**
+ * Start the app on an ephemeral port. Passing a listening server to supertest
+ * (instead of the bare app) means concurrent requests do not each attach
+ * "listening"/"error" listeners while supertest starts its own server.
+ */
+async function listen(app) {
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  openServers.add(server);
+  return server;
+}
+
+async function closeServers() {
+  const servers = [...openServers];
+  openServers.clear();
+  await Promise.all(servers.map((server) => {
+    server.closeAllConnections();
+    return new Promise((resolve) => server.close(resolve));
+  }));
+}
+
 /** Agent with the pre-session + CSRF cookies, and the token for the header. */
 async function csrfAgent(app) {
-  const agent = request.agent(app);
+  const agent = request.agent(await listen(app));
   const page = await agent.get('/login');
   const token = /name="csrf-token" content="([^"]+)"/.exec(page.text)[1];
   const post = (url, body) => agent.post(url).set('X-CSRF-Token', token).send(body);
@@ -113,6 +138,8 @@ module.exports = {
   buildRealApp,
   resetData,
   resetAndSeed,
+  listen,
+  closeServers,
   csrfAgent,
   userRow,
 };
