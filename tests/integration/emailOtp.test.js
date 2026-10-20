@@ -1,6 +1,5 @@
 'use strict';
 
-const Redis = require('ioredis');
 const {
   connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, cookieFrom, userRow, captureDelivery,
   captureLogs, enableEmail2fa, REGISTERED, PASSWORDS,
@@ -174,8 +173,7 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
   });
 
   test('2FA sign-in returns 503 when Redis is down, and nothing is counted', async () => {
-    const deadRedis = new Redis('redis://127.0.0.1:6390', { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 0 });
-    deadRedis.on('error', () => {});
+    const deadRedis = connectRedis('redis://127.0.0.1:6390', { lazyConnect: true, enableOfflineQueue: false, maxRetriesPerRequest: 0 });
     try {
       const app = buildRealApp({ db, redis: deadRedis });
       const { post } = await csrfAgent(app);

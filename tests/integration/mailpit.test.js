@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, enableEmail2fa, mailpit, REGISTERED, PASSWORDS,
+  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, enableEmail2fa, mailpit, trackForTeardown, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { loadConfig } = require('../../app/src/config');
 const { createDelivery } = require('../../app/src/services/delivery');
@@ -27,7 +27,7 @@ describe('email delivery end to end through real SMTP (Mailpit)', () => {
       SMTP_HOST: '127.0.0.1',
       SMTP_PORT: '1025',
     });
-    delivery = createDelivery(config, { redis });
+    delivery = trackForTeardown(createDelivery(config, { redis }), async () => delivery.close());
   });
   beforeEach(async () => {
     await resetAndSeed(db);

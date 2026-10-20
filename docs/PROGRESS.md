@@ -50,6 +50,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 7 | Enforce email verification (FR-A2); `users.email_verified` already exists and is `false` for new sign-ups. |
 | 8 | `calibrate` must include the **OTP step time** (send + verify) as well as bcrypt and DB time. |
 | 9 | Check the registration privacy notice wording against the Nigeria Data Protection Act 2023 (NFR-5). |
+| 8, 9 | **Unexplained "fetch failed" glitch (seen 2026-10-17).** During the Phase 2 end-to-end script against the running containers, the first HTTP request after several `docker compose exec` CLI calls twice failed client-side with `fetch failed`. The app logged no such request and never restarted; the same requests succeeded when re-run seconds later. A 6.5 s idle keep-alive test did not reproduce it. Suspected: Docker Desktop port forwarding on the Windows host, not the app. Watch for it in the Phase 8 load tests (it would show up as connection errors, not HTTP errors) and record whether it reappears. |
 
 ---
 
@@ -623,5 +624,47 @@ Mailpit (every email the app sends): **http://localhost:8025**. App: **http://lo
   - `SELECT code_hash, attempts_used, used FROM otp_codes ORDER BY id DESC LIMIT 3;`
   - `SELECT left(token_hash, 10), used, expires_at - created_at FROM password_reset_tokens ORDER BY id DESC LIMIT 3;` shows a 30-minute lifetime.
 - `docker compose exec redis redis-cli --scan --pattern 'cg:*'` showing hashed ticket keys, not raw tokens.
-- `npm test` summary (unit 109, integration 122).
+- `npm test` summary (unit 109, integration 123 after the follow-up below).
 - `docker compose exec app npm run admin -- reset-2fa ADMIN0001` (refusal) and with `--confirm`.
+
+### Follow-up: test hardening (2026-10-20)
+**Reported:** under heavy load, the integration test "knex warnings (pool acquire timeout) go to pino" once failed with `KnexTimeoutError`, and Jest then hung for over 5 minutes.
+
+**Cause (reproduced):**
+- The test held the pool's only connection with `await tiny.transaction()` **before** its `try/finally`, under a deliberately short 200 ms acquire timeout.
+- Taking that connection means opening a new PostgreSQL connection. On a busy machine that took longer than 200 ms, so `transaction()` itself threw.
+- The `finally` never ran, so the pool was never destroyed (and the `console.log` spy never restored), and its connection kept Jest alive.
+- Reproduced with a 1 ms timeout: the same `KnexTimeoutError`, and Jest did not exit (killed after 150 s).
+- The lockout suite's pool-exhaustion test had the same weakness (300 ms).
+
+**Changes:**
+- **Both pool tests:** a new helper, `holdOnlyConnection()`, retries `transaction()` until the connection is held. A timed-out acquire doesn't cancel the connection being opened, so the next attempt gets it. Warnings from that warm-up are discarded before asserting.
+  - Everything, including taking the connection, now runs inside `try/finally`, which always rolls back, destroys the pool and restores the spy.
+  - Checked with a 1 ms timeout (every attempt loses the race): 48 timed-out warm-up attempts, then the test passed and Jest exited.
+- **Teardown safety net:** every DB pool, Redis client and SMTP transport opened by integration tests is registered and closed after each test file (`afterAll` in `tests/integration/setup.js`), even if a test fails half-way.
+- **`--detectOpenHandles`:** both suites report no open handles when passing. The hang only happened on the failure path above, which is now closed.
+- **Other timing-dependent tests made deterministic:**
+
+| Test | Before | Now |
+|---|---|---|
+| Unknown-user vs wrong-password login | compared wall-clock medians (ratio 0.5–2) | records every bcrypt compare: all five failure paths (wrong password, unknown matric, unknown email, inactive, locked) do exactly one compare at cost 10, i.e. equal work |
+| Forgot-password timing | medians < 400 ms with an 800 ms mail driver | a **gated** driver that can't finish sending until the test releases it; both responses (known and unknown email) arrive while the gate is closed, which proves the mail server isn't in the request path |
+| "Password changed" email doesn't block | response < 1.2 s | gated driver: the reset answers while the notification is still blocked |
+| Waits for background emails | polling with 5–10 s deadlines | wait on the app's own background-work tracker (`idle()`) |
+| TOTP drift / replay tests | codes made from the real clock; a 30 s step boundary between generating and checking could reject a valid "one step behind" code | the TOTP service takes an injectable clock (default: real time); tests pin it 15 s into a step |
+| Health / delivery timeout unit tests | elapsed time < 2 s / < 1 s | bound removed: if the timeout didn't fire, the request would hang and Jest's per-test timeout would fail it anyway |
+
+- Fixed sleeps that remain (1.1 s against a 1 s Redis cooldown) are lower bounds, so a busy machine can only make them longer, never cause a false failure.
+
+**Which test fails if database error details reach the logs:**
+- **Integration:** `tests/integration/system.test.js` › "database error details (pg `detail` with a token hash) never reach the logs of the real app". It takes a **genuine** PostgreSQL unique-violation error whose `detail` contains a token-hash value and pushes it through the real app's request logger and error handler. Then it asserts the error code is logged but the value is not.
+  - Mutation check: removing the serializer from the app's pino-http setup makes this test fail on exactly that value.
+- **Unit:** `tests/unit/logger.test.js` › "drops database values from errors (pg detail, bindings), on the app logger and on request loggers".
+
+**Results: three full `npm test` runs in a row (2026-10-20)**
+
+| Run | Machine | Unit | Integration | Wall time | Console noise / open handles |
+|---|---|---|---|---|---|
+| 1 | idle | 109 passed | 123 passed | 244 s | none; exited by itself |
+| 2 | idle | 109 passed | 123 passed | 178 s | none; exited by itself |
+| 3 | **CPU stress**: 5 busy threads on 4 logical CPUs, CPU at 100% before and at the end | 109 passed | 123 passed | 852 s (integration 725 s) | none; exited by itself |

@@ -44,8 +44,10 @@ class EnrolmentError extends Error {
  * blocked by storing the last accepted time step (totp_last_step) and
  * accepting only later steps, atomically.
  */
-function createTotpService({ db, redis, encKey, hmacKey }) {
+function createTotpService({ db, redis, encKey, hmacKey, clock = { now: () => Date.now() } }) {
   const pendingKey = (userId) => `cg:totp-pending:${userId}`;
+  // The clock is injectable so tests can pin time and never straddle a 30 s step.
+  const epoch = () => Math.floor(clock.now() / 1000);
   const hashBackup = (userId, code) => keyedHash(hmacKey, 'backup', `${userId}:${code}`);
 
   /** Start enrolment: new secret kept (encrypted) in Redis until confirmed. */
@@ -67,7 +69,7 @@ function createTotpService({ db, redis, encKey, hmacKey }) {
     if (!pending) throw new EnrolmentError(400, 'Set-up expired. Start again.');
     const secret = decryptForUser(encKey, account.id, pending);
 
-    const result = await verify({ secret, token: code, epochTolerance: DRIFT_SEC });
+    const result = await verify({ secret, token: code, epoch: epoch(), epochTolerance: DRIFT_SEC });
     if (!result.valid) throw new EnrolmentError(400, 'That code did not match. Check the time on your phone and try again.');
 
     const codes = Array.from({ length: BACKUP_COUNT }, generateBackupCode);
@@ -96,7 +98,7 @@ function createTotpService({ db, redis, encKey, hmacKey }) {
     // Throws if TOTP_ENC_KEY changed or the row was tampered with: a server error, never counted.
     const secret = decryptForUser(encKey, account.id, account.totp_secret_enc);
     const lastStep = account.totp_last_step === null ? undefined : Number(account.totp_last_step);
-    const result = await verify({ secret, token: code, epochTolerance: DRIFT_SEC, afterTimeStep: lastStep });
+    const result = await verify({ secret, token: code, epoch: epoch(), epochTolerance: DRIFT_SEC, afterTimeStep: lastStep });
     if (!result.valid) return 'wrong';
 
     // Atomic replay guard: only one request can move the step forward.

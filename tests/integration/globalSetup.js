@@ -13,7 +13,10 @@ const describe = (err) => [err.code, err.message].filter(Boolean).join(': ') || 
 module.exports = async () => {
   const { databaseUrl, adminUrl, dbName, redisUrl } = testUrls();
 
-  const admin = knex({ client: 'pg', connection: adminUrl, pool: { min: 0, max: 1 } });
+  // knex would print its own "Acquire connection error" for a refused connection;
+  // the error thrown below already says what is wrong, so keep the console clean.
+  const quiet = { warn: () => {} };
+  const admin = knex({ client: 'pg', connection: adminUrl, pool: { min: 0, max: 1 }, log: quiet });
   try {
     await admin.raw('select 1');
   } catch (err) {
@@ -31,6 +34,7 @@ module.exports = async () => {
     client: 'pg',
     connection: databaseUrl,
     migrations: { directory: path.join(__dirname, '..', '..', 'db', 'migrations') },
+    log: quiet,
   });
   try {
     await db.migrate.latest();

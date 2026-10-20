@@ -33,17 +33,55 @@ const STUDENTS = generateStudents(SMALL_SEED.registeredStudents + SMALL_SEED.fre
 const REGISTERED = STUDENTS.slice(0, 3).map((s, i) => ({ ...s, email: studentEmail(s, i) }));
 const FREE = STUDENTS.slice(3);
 
+// Safety net: every DB pool, Redis client and SMTP transport a test opens is
+// registered here and closed after each test file (tests/integration/setup.js),
+// so a test that fails half-way can never keep Jest from exiting.
+const openResources = new Set();
+
+/** Register something to close after the test file; returns it unchanged. */
+function trackForTeardown(resource, close) {
+  openResources.add({ resource, close });
+  return resource;
+}
+
+async function closeAllResources() {
+  const all = [...openResources];
+  openResources.clear();
+  await Promise.allSettled(all.map(({ close }) => close()));
+}
+
 function connectDb(options = {}) {
-  return knex({
+  const db = knex({
     client: 'pg',
     connection: testUrls().databaseUrl,
     migrations: { directory: path.join(__dirname, '..', '..', 'db', 'migrations') },
     ...options,
   });
+  return trackForTeardown(db, () => db.destroy());
 }
 
-function connectRedis() {
-  return new Redis(testUrls().redisUrl, { maxRetriesPerRequest: 1 });
+function connectRedis(url = testUrls().redisUrl, options = { maxRetriesPerRequest: 1 }) {
+  const redis = new Redis(url, options);
+  redis.on('error', () => {}); // a dead test client must not print or crash
+  return trackForTeardown(redis, async () => redis.disconnect());
+}
+
+/**
+ * Take the ONLY connection of a 1-connection pool, without depending on how
+ * fast the machine is. Opening that first connection is subject to the pool's
+ * (deliberately short) acquire timeout; on a busy machine it can lose the race.
+ * A timed-out acquire does not cancel the connection being opened: it lands in
+ * the pool and the next attempt gets it. So retry until it is held. Callers
+ * discard any warnings logged during this warm-up before asserting.
+ */
+async function holdOnlyConnection(db, { maxAttempts = 200 } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await db.transaction();
+    } catch (err) {
+      if (err.name !== 'KnexTimeoutError' || attempt >= maxAttempts) throw err;
+    }
+  }
 }
 
 function captureLogs() {
@@ -75,6 +113,29 @@ function captureDelivery({ fail = false, delayMs = 0, failMessage = 'simulated d
       const match = /code is: (\d{6})/.exec((sent[sent.length - 1] || {}).text || '');
       return match && match[1];
     },
+  };
+}
+
+/**
+ * Delivery driver that cannot finish sending until the test calls release().
+ * If a response arrives while the gate is closed, the send was provably not in
+ * the request path, with no timing involved.
+ */
+function gatedDelivery() {
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  const sent = [];
+  let started = 0;
+  return {
+    name: 'console',
+    sent,
+    get started() { return started; },
+    async send(message) {
+      started += 1;
+      await gate;
+      sent.push(message);
+    },
+    release: () => open(),
   };
 }
 
@@ -115,7 +176,7 @@ const enableEmail2fa = (db, matric) =>
   db('users').where({ matric_or_staff_id: matric }).update({ two_factor_enabled: true, two_factor_method: 'email' });
 
 /** Real app against the test PostgreSQL database and Redis DB 15. */
-function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureDelivery() } = {}) {
+function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureDelivery(), clock } = {}) {
   const { databaseUrl, redisUrl } = testUrls();
   const config = loadConfig({
     NODE_ENV: 'test',
@@ -134,6 +195,7 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     redis,
     hasher: hasher || createHasher(config.bcryptCost),
     delivery,
+    clock,
   });
   liveApps.add(app);
   return app;
@@ -225,9 +287,13 @@ module.exports = {
   listen,
   closeServers,
   settleBackgroundWork,
+  trackForTeardown,
+  closeAllResources,
+  holdOnlyConnection,
   csrfAgent,
   cookieFrom,
   captureDelivery,
+  gatedDelivery,
   mailpit,
   enableEmail2fa,
   waitFor,

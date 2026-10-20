@@ -4,6 +4,7 @@ const request = require('supertest');
 const {
   connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, captureLogs, FREE, REGISTERED, PASSWORDS,
 } = require('./helpers');
+const { createHasher } = require('../../app/src/services/passwordHasher');
 
 describe('whole app against real PostgreSQL and Redis', () => {
   let db;
@@ -55,6 +56,31 @@ describe('whole app against real PostgreSQL and Redis', () => {
       expect((await post('/auth/login', { identifier, password: "' OR '1'='1" })).status).toBe(401);
     }
     expect(Number((await db('users').count('* as n'))[0].n)).toBeGreaterThan(0);
+  });
+
+  test('database error details (pg `detail` with a token hash) never reach the logs of the real app', async () => {
+    // Get a GENUINE PostgreSQL unique-violation error whose `detail` contains a hash value.
+    const user = await db('users').where({ matric_or_staff_id: REGISTERED[0].matric_no }).first('id');
+    const leak = 'LEAK-CHECK-TOKEN-HASH-7f3a9c';
+    const row = { user_id: user.id, token_hash: leak, expires_at: db.fn.now() };
+    await db('password_reset_tokens').insert(row);
+    const pgError = await db('password_reset_tokens').insert(row).catch((err) => err);
+    await db('password_reset_tokens').where({ token_hash: leak }).del();
+    expect(pgError.code).toBe('23505');
+    expect(pgError.detail).toContain(leak); // the value really is in the pg error
+
+    // Push it through the real app (pino-http request logger + error handler) by
+    // making the injected hasher throw it during a login.
+    const { lines, logger } = captureLogs();
+    const hasher = { ...createHasher(4), compare: async () => { throw pgError; } };
+    const { post } = await csrfAgent(buildRealApp({ db, redis, logger, hasher }));
+    const res = await post('/auth/login', { identifier: REGISTERED[0].matric_no, password: PASSWORDS.student });
+
+    expect(res.status).toBe(500);
+    expect(res.text).not.toContain(leak);
+    const output = lines.join('');
+    expect(output).toContain('23505'); // the error was logged (code kept for debugging)...
+    expect(output).not.toContain(leak); // ...but not the value from `detail`
   });
 
   test('passwords never appear in the logs (register, failed login, successful login)', async () => {

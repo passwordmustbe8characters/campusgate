@@ -2,13 +2,12 @@
 
 const {
   connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, cookieFrom, userRow, captureDelivery, captureLogs,
-  enableEmail2fa, waitFor, REGISTERED, PASSWORDS,
+  gatedDelivery, enableEmail2fa, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { FORGOT_RESPONSE } = require('../../app/src/controllers/passwordController');
 
 const NEW_PASSWORD = 'Brand-New-Pass-42';
 const tokenFrom = (message) => /#token=([A-Za-z0-9_-]{43})/.exec(message.text)[1];
-const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
 describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Redis', () => {
   let db;
@@ -32,12 +31,16 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
     const app = buildRealApp({ db, redis, env, delivery, logger });
     const agent = await csrfAgent(app);
     const res = await agent.post('/auth/password/forgot', { email });
-    return { ...agent, delivery, res };
+    return { ...agent, app, delivery, res };
   }
+
+  // Wait for the app's own background work (no polling deadline, no timing).
+  const settled = (ctx) => ctx.app.get('background').idle();
 
   async function obtainToken(options) {
     const ctx = await requestReset(options);
-    const message = await waitFor(() => ctx.delivery.sent.find((m) => /Reset your CampusGate password/.test(m.subject)));
+    await settled(ctx);
+    const message = ctx.delivery.sent.find((m) => /Reset your CampusGate password/.test(m.subject));
     return { ...ctx, token: tokenFrom(message) };
   }
 
@@ -55,28 +58,24 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
     expect(responses[0].body).toEqual(FORGOT_RESPONSE);
   });
 
-  test('forgot-password response time does not depend on the email or the mail server (slow driver: 800 ms)', async () => {
-    const slow = captureDelivery({ delayMs: 800 });
-    const app = buildRealApp({ db, redis, delivery: slow });
+  test('forgot-password answers before the email is sent, for known and unknown emails alike (gated driver)', async () => {
+    // The driver cannot finish until release(). Both responses arriving while the
+    // gate is still closed proves the mail server is not in the request path, so
+    // a slow mail server cannot make known emails slower than unknown ones.
+    const gated = gatedDelivery();
+    const app = buildRealApp({ db, redis, delivery: gated });
     const { post } = await csrfAgent(app);
-    const timed = async (email) => {
-      await redis.flushdb(); // reset cooldowns but keep the agent's cookies (CSRF lives in cookies, not Redis)
-      const start = process.hrtime.bigint();
-      expect((await post('/auth/password/forgot', { email })).status).toBe(202);
-      return Number(process.hrtime.bigint() - start) / 1e6;
-    };
-    const known = [];
-    const unknown = [];
-    for (let i = 0; i < 5; i += 1) {
-      known.push(await timed(student.email));
-      unknown.push(await timed(`nobody${i}@example.com`));
-    }
-    expect(median(known)).toBeLessThan(400); // the 800 ms send is not in the request path
-    expect(median(unknown)).toBeLessThan(400);
-    const ratio = median(known) / median(unknown);
-    expect(ratio).toBeGreaterThan(0.33);
-    expect(ratio).toBeLessThan(3);
-    await waitFor(() => slow.sent.length >= 5, { timeoutMs: 10000 });
+
+    const known = await post('/auth/password/forgot', { email: student.email });
+    const unknown = await post('/auth/password/forgot', { email: 'nobody@example.com' });
+    expect(known.status).toBe(202);
+    expect(unknown.text).toBe(known.text);
+    expect(gated.sent).toHaveLength(0); // nothing could have been sent yet
+
+    gated.release();
+    await app.get('background').idle();
+    expect(gated.sent).toHaveLength(1); // only the known email gets a message
+    expect(gated.sent[0].email).toBe(student.email);
   });
 
   test('the token is 32 random bytes, sent in the URL fragment, stored only as an HMAC, valid 30 minutes', async () => {
@@ -181,25 +180,33 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
 
   test('a "password changed" email is sent after a reset, without blocking the response', async () => {
     const delivery = captureDelivery();
-    const { post, token } = await obtainToken({ delivery });
-    const slowAfter = Date.now();
-    delivery.send = (orig => async (m) => { await new Promise((r) => setTimeout(r, 800)); return orig(m); })(delivery.send);
-    const res = await post('/auth/password/reset', { token, newPassword: NEW_PASSWORD });
-    expect(res.status).toBe(200);
-    expect(Date.now() - slowAfter).toBeLessThan(800 + 400); // bcrypt + DB, but not the 800 ms email
-    const notice = await waitFor(() => delivery.sent.find((m) => /password was changed/.test(m.subject)));
-    expect(notice.email).toBe(student.email);
+    const ctx = await obtainToken({ delivery });
+    // From now on sends cannot finish until we open the gate.
+    let open;
+    const gate = new Promise((resolve) => { open = resolve; });
+    const original = delivery.send;
+    delivery.send = async (m) => { await gate; return original(m); };
+
+    const res = await ctx.post('/auth/password/reset', { token: ctx.token, newPassword: NEW_PASSWORD });
+    expect(res.status).toBe(200); // answered while the notification is still blocked
+    const changed = () => delivery.sent.find((m) => /password was changed/.test(m.subject));
+    expect(changed()).toBeUndefined();
+
+    open();
+    await settled(ctx);
+    expect(changed().email).toBe(student.email);
   });
 
   test('forgot-password background failures are logged without the email address and counted', async () => {
     const { lines, logger } = captureLogs();
     const failing = captureDelivery({ fail: true, failMessage: `550 mailbox unavailable for <${student.email}>` });
-    const { res } = await requestReset({ delivery: failing, logger });
-    expect(res.status).toBe(202);
-    expect(res.body).toEqual(FORGOT_RESPONSE);
+    const ctx = await requestReset({ delivery: failing, logger });
+    expect(ctx.res.status).toBe(202);
+    expect(ctx.res.body).toEqual(FORGOT_RESPONSE);
 
-    await waitFor(async () => Number(await redis.get('cg:metrics:reset_email_failures')) === 1);
-    const failure = await waitFor(() => lines.map((l) => JSON.parse(l)).find((l) => l.event === 'reset_email_failed'));
+    await settled(ctx);
+    expect(Number(await redis.get('cg:metrics:reset_email_failures'))).toBe(1);
+    const failure = lines.map((l) => JSON.parse(l)).find((l) => l.event === 'reset_email_failed');
     expect(failure.error.type).toBe('DeliveryError');
     expect(failure.error.cause.message).toContain('[email]');
     expect(lines.join('')).not.toContain(student.email);
@@ -210,28 +217,31 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
     const app = buildRealApp({ db, redis, delivery });
     const { post } = await csrfAgent(app);
     const a = await post('/auth/password/forgot', { email: student.email });
-    await waitFor(() => delivery.sent.length === 1);
+    await app.get('background').idle();
+    expect(delivery.sent).toHaveLength(1);
     const b = await post('/auth/password/forgot', { email: student.email });
+    await app.get('background').idle();
     expect(b.text).toBe(a.text);
-    await new Promise((r) => setTimeout(r, 300));
     expect(delivery.sent).toHaveLength(1);
   });
 
   describe('change password (account ticket)', () => {
     async function signedIn(delivery = captureDelivery()) {
-      const agent = await csrfAgent(buildRealApp({ db, redis, delivery }));
+      const app = buildRealApp({ db, redis, delivery });
+      const agent = await csrfAgent(app);
       await agent.post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
-      return { ...agent, delivery };
+      return { ...agent, app, delivery };
     }
 
     test('changes the password, revokes the tickets (sign in again), and sends a notice', async () => {
-      const { post, delivery } = await signedIn();
-      const res = await post('/auth/password/change', { currentPassword: PASSWORDS.student, newPassword: NEW_PASSWORD });
+      const ctx = await signedIn();
+      const res = await ctx.post('/auth/password/change', { currentPassword: PASSWORDS.student, newPassword: NEW_PASSWORD });
       expect(res.status).toBe(200);
       expect(await redis.keys('cg:acct:*')).toHaveLength(0);
-      expect((await post('/auth/2fa/email/enable')).status).toBe(401);
+      expect((await ctx.post('/auth/2fa/email/enable')).status).toBe(401);
       expect((await login(NEW_PASSWORD)).status).toBe(200);
-      await waitFor(() => delivery.sent.find((m) => /password was changed/.test(m.subject)));
+      await settled(ctx);
+      expect(ctx.delivery.sent.find((m) => /password was changed/.test(m.subject))).toBeDefined();
     });
 
     test('a wrong current password is refused and counts as a credential failure', async () => {
@@ -262,10 +272,11 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
     const app = buildRealApp({ db, redis, delivery, logger });
     const { post } = await csrfAgent(app);
     await post('/auth/password/forgot', { email: student.email });
-    const message = await waitFor(() => delivery.sent[0]);
-    const token = tokenFrom(message);
+    await app.get('background').idle();
+    const token = tokenFrom(delivery.sent[0]);
     await post('/auth/password/reset', { token, newPassword: NEW_PASSWORD });
-    await waitFor(() => delivery.sent.length === 2);
+    await app.get('background').idle();
+    expect(delivery.sent).toHaveLength(2);
 
     const output = lines.join('');
     expect(lines.length).toBeGreaterThan(3);

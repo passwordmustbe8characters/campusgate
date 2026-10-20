@@ -30,7 +30,7 @@ const { createAuthController } = require('./controllers/authController');
 const { createSettingsController } = require('./controllers/settingsController');
 
 /** Wire services together. Exposed separately so scripts and tests can reuse it. */
-function createServices({ config, logger, db, redis, hasher, delivery }) {
+function createServices({ config, logger, db, redis, hasher, delivery, clock }) {
   const preauthTickets = createTicketStore({
     redis, hmacKey: config.tokenHmacKey, kind: 'preauth', ttlSec: config.preauthTtlSec,
   });
@@ -41,7 +41,7 @@ function createServices({ config, logger, db, redis, hasher, delivery }) {
   const otp = createOtpService({
     db, redis, delivery, hmacKey: config.tokenHmacKey, cooldownSec: config.otpResendCooldownSec,
   });
-  const totp = createTotpService({ db, redis, encKey: config.totpEncKey, hmacKey: config.tokenHmacKey });
+  const totp = createTotpService({ db, redis, encKey: config.totpEncKey, hmacKey: config.tokenHmacKey, clock });
   const secondFactor = createSecondFactorService({
     db,
     preauthTickets,
@@ -77,11 +77,12 @@ function createApp({
   redis,
   hasher = createHasher(config.bcryptCost),
   delivery = createDelivery(config, { redis }),
+  clock, // optional { now() } for tests; defaults to the real clock
 }) {
   const app = express();
   const csrf = createCsrf(config);
   const cookies = ticketCookies(config);
-  const services = createServices({ config, logger, db, redis, hasher, delivery });
+  const services = createServices({ config, logger, db, redis, hasher, delivery, clock });
   const ticketDeps = { accountTickets: services.accountTickets, cookies };
   const requireAccount = requireAccountTicket(ticketDeps);
   const requireAccountOrEnrolment = requireAccountTicket(ticketDeps, { allowEnrolment: true });

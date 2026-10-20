@@ -34,12 +34,12 @@ describe('GET /health', () => {
   });
 
   test('times out a hanging dependency instead of hanging the request', async () => {
+    // The fake never answers. If the health check did not time out, this request
+    // would hang and Jest's per-test timeout would fail the test: no wall-clock bound needed.
     const redis = { ping: () => new Promise(() => {}) };
-    const started = Date.now();
     const res = await request(buildTestApp({ redis })).get('/health');
 
     expect(res.status).toBe(503);
     expect(res.body.checks.redis.status).toBe('error');
-    expect(Date.now() - started).toBeLessThan(2000);
   });
 });

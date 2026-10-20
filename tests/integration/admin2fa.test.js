@@ -9,7 +9,7 @@ const request = require('supertest');
 const { generate } = require('otplib');
 const {
   connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, cookieFrom, userRow, captureLogs, listen,
-  enableEmail2fa, TEST_KEYS, REGISTERED, PASSWORDS,
+  enableEmail2fa, trackForTeardown, holdOnlyConnection, TEST_KEYS, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { testUrls } = require('./testEnv');
 const { createTicketStore } = require('../../app/src/services/tickets');
@@ -21,7 +21,10 @@ const { loadConfig } = require('../../app/src/config');
 const run = promisify(execFile);
 const ROOT = path.join(__dirname, '..', '..');
 const ADMIN = 'ADMIN0001';
-const totpNow = (secret, offset = 0) => generate({ secret, epoch: Math.floor(Date.now() / 1000) + offset });
+// Pinned clock: 15 s into a 30 s TOTP step, so generating a code and the server
+// checking it can never straddle a step boundary, however slow the machine is.
+const clock = { t: 1_800_000_015_000, now() { return this.t; } };
+const totpNow = (secret, offset = 0) => generate({ secret, epoch: clock.t / 1000 + offset });
 
 describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
   let db;
@@ -41,7 +44,7 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
   });
 
   const adminLogin = async () => {
-    const agent = await csrfAgent(buildRealApp({ db, redis }));
+    const agent = await csrfAgent(buildRealApp({ db, redis, clock }));
     const res = await agent.post('/auth/login', { identifier: ADMIN, password: PASSWORDS.admin });
     return { ...agent, res };
   };
@@ -132,7 +135,7 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     });
 
     test('a student with a valid ticket is refused (403)', async () => {
-      const agent = await csrfAgent(buildRealApp({ db, redis }));
+      const agent = await csrfAgent(buildRealApp({ db, redis, clock }));
       const res = await agent.post('/auth/login', { identifier: REGISTERED[0].matric_no, password: PASSWORDS.student });
       expect((await probe(cookieFrom(res, 'cg.acct'))).status).toBe(403);
     });
@@ -191,7 +194,7 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     test('a student reset this way signs in with the password only until they set 2FA up again', async () => {
       await enableEmail2fa(db, REGISTERED[0].matric_no);
       await cli('reset-2fa', REGISTERED[0].email, '--confirm');
-      const agent = await csrfAgent(buildRealApp({ db, redis }));
+      const agent = await csrfAgent(buildRealApp({ db, redis, clock }));
       const res = await agent.post('/auth/login', { identifier: REGISTERED[0].matric_no, password: PASSWORDS.student });
       expect(res.body.status).toBe('signed_in');
     });
@@ -203,19 +206,31 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
 
   test('knex warnings (pool acquire timeout) go to pino as knex_warning, not console.log', async () => {
     const { lines, logger } = captureLogs();
-    const tiny = createDb({ databaseUrl: testUrls().databaseUrl, dbPoolMax: 1, dbAcquireTimeoutMs: 200 }, logger);
+    const tiny = trackForTeardown(
+      createDb({ databaseUrl: testUrls().databaseUrl, dbPoolMax: 1, dbAcquireTimeoutMs: 200 }, logger),
+      () => tiny.destroy(),
+    );
     const consoleSpy = jest.spyOn(console, 'log');
-    const trx = await tiny.transaction();
+    let trx;
     try {
+      // Timing-independent: on a slow machine opening the first connection can
+      // exceed 200 ms, so retry until it is held, then forget the warm-up warnings.
+      trx = await holdOnlyConnection(tiny);
+      lines.length = 0;
+      consoleSpy.mockClear();
+
+      // Pool of 1 with its only connection held: this acquire can only time out.
       await expect(tiny.raw('select 1')).rejects.toThrow(/Timeout acquiring a connection/);
+
+      const warnings = lines.map((l) => JSON.parse(l)).filter((l) => l.event === 'knex_warning');
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0].knexMessage).toMatch(/Acquire connection error/);
+      expect(consoleSpy).not.toHaveBeenCalled();
     } finally {
-      await trx.rollback();
+      // Always runs: a failed assertion must never leave a connection, pool or spy behind.
+      consoleSpy.mockRestore();
+      if (trx) await trx.rollback().catch(() => {});
       await tiny.destroy();
     }
-    const warnings = lines.map((l) => JSON.parse(l)).filter((l) => l.event === 'knex_warning');
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0].knexMessage).toMatch(/Acquire connection error/);
-    expect(consoleSpy).not.toHaveBeenCalled();
-    consoleSpy.mockRestore();
   });
 });

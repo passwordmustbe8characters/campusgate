@@ -7,8 +7,10 @@ const {
 const { decryptForUser } = require('../../app/src/services/secrets');
 const { RESTART_MESSAGE } = require('../../app/src/controllers/authController');
 
-const now = () => Math.floor(Date.now() / 1000);
-const totpAt = (secret, offsetSec = 0) => generate({ secret, epoch: now() + offsetSec });
+// Pinned clock: 15 s into a 30 s TOTP step, so generating a code and the server
+// checking it can never straddle a step boundary, however slow the machine is.
+const clock = { t: 1_800_000_015_000, now() { return this.t; } };
+const totpAt = (secret, offsetSec = 0) => generate({ secret, epoch: clock.t / 1000 + offsetSec });
 
 describe('TOTP and backup codes (FR-A8) against real PostgreSQL + Redis', () => {
   let db;
@@ -31,7 +33,7 @@ describe('TOTP and backup codes (FR-A8) against real PostgreSQL + Redis', () => 
 
   /** Sign in (password only), enrol TOTP through the API, return the secret and backup codes. */
   async function enrol({ logger } = {}) {
-    const app = buildRealApp({ db, redis, logger });
+    const app = buildRealApp({ db, redis, clock, logger });
     const agent = await csrfAgent(app);
     expect((await agent.post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student })).body.status).toBe('signed_in');
     const start = await agent.post('/auth/totp/enrol');
@@ -43,14 +45,14 @@ describe('TOTP and backup codes (FR-A8) against real PostgreSQL + Redis', () => 
 
   /** Password step for an enrolled user; returns the agent helpers. */
   async function passwordStep(env) {
-    const agent = await csrfAgent(buildRealApp({ db, redis, env }));
+    const agent = await csrfAgent(buildRealApp({ db, redis, clock, env }));
     const res = await agent.post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
     expect(res.body).toMatchObject({ status: 'second_factor_required', method: 'totp' });
     return agent;
   }
 
   test('enrolment returns a QR code and base32 secret; the pending secret is encrypted in Redis', async () => {
-    const app = buildRealApp({ db, redis });
+    const app = buildRealApp({ db, redis, clock });
     const { post } = await csrfAgent(app);
     await post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
     const start = await post('/auth/totp/enrol');
@@ -84,7 +86,7 @@ describe('TOTP and backup codes (FR-A8) against real PostgreSQL + Redis', () => 
   });
 
   test('a wrong confirmation code does not turn TOTP on; enrolling twice is refused', async () => {
-    const app = buildRealApp({ db, redis });
+    const app = buildRealApp({ db, redis, clock });
     const { post } = await csrfAgent(app);
     await post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
     const start = await post('/auth/totp/enrol');
@@ -170,7 +172,7 @@ describe('TOTP and backup codes (FR-A8) against real PostgreSQL + Redis', () => 
   test('if TOTP_ENC_KEY changes, stored secrets cannot be read: 500, and nothing is counted', async () => {
     const { secret } = await enrol();
     const otherKey = Buffer.alloc(32, 99).toString('base64url');
-    const agent = await csrfAgent(buildRealApp({ db, redis, env: { TOTP_ENC_KEY: otherKey } }));
+    const agent = await csrfAgent(buildRealApp({ db, redis, clock, env: { TOTP_ENC_KEY: otherKey } }));
     await agent.post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
     const res = await agent.post('/auth/totp/verify', { code: await totpAt(secret, 30) });
     expect(res.status).toBe(500);

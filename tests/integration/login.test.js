@@ -79,31 +79,43 @@ describe('login (FR-A4, FR-A5) against real PostgreSQL', () => {
     expect(responses[0].body).toEqual({ error: loginFailedMessage({ lockout_minutes: 15 }) });
   });
 
-  test('unknown-user logins take about as long as wrong-password logins (same-cost dummy hash)', async () => {
-    // Real cost (10) for this test only, so the timing difference would be visible if it existed.
-    const hasher = createHasher(10);
-    const timedApp = buildRealApp({ db, redis, hasher, env: { BCRYPT_COST: '10' } });
+  test('every failure path does the same bcrypt work as a wrong password (same-cost dummy hash)', async () => {
+    // Response time is dominated by bcrypt. Instead of timing requests (which a
+    // busy machine distorts), record every bcrypt compare and its cost factor:
+    // equal work on every path means no timing difference to measure.
+    const real = createHasher(10);
+    const compares = [];
+    const recording = {
+      ...real,
+      compare: async (password, hash) => {
+        compares.push(costOf(hash));
+        return real.compare(password, hash);
+      },
+    };
+    const app10 = buildRealApp({ db, redis, hasher: recording, env: { BCRYPT_COST: '10' } });
     await db('policies').where({ id: 1 }).update({ max_attempts: 20 });
     await db('users').where({ matric_or_staff_id: student.matric_no })
-      .update({ password_hash: await hasher.hash(PASSWORDS.student) });
-    expect(costOf(await hasher.dummyHash())).toBe(10);
+      .update({ password_hash: await real.hash(PASSWORDS.student) });
+    await db('users').where({ matric_or_staff_id: REGISTERED[1].matric_no })
+      .update({ is_active: false, password_hash: await real.hash(PASSWORDS.student) });
+    await db('users').where({ matric_or_staff_id: REGISTERED[2].matric_no })
+      .update({ locked_until: db.raw("now() + interval '15 minutes'"), password_hash: await real.hash(PASSWORDS.student) });
 
-    const { post } = await csrfAgent(timedApp);
-    const median = async (body) => {
-      const times = [];
-      for (let i = 0; i < 7; i += 1) {
-        const start = process.hrtime.bigint();
-        expect((await post('/auth/login', body)).status).toBe(401);
-        times.push(Number(process.hrtime.bigint() - start) / 1e6);
-      }
-      return times.sort((a, b) => a - b)[3];
+    const { post } = await csrfAgent(app10);
+    const cases = {
+      wrongPassword: { identifier: student.matric_no, password: 'Wrong-Password-1!' },
+      unknownMatric: { identifier: 'SCI/2019/9999', password: 'Wrong-Password-1!' },
+      unknownEmail: { identifier: 'nobody@example.com', password: 'Wrong-Password-1!' },
+      inactive: { identifier: REGISTERED[1].matric_no, password: PASSWORDS.student },
+      locked: { identifier: REGISTERED[2].matric_no, password: PASSWORDS.student },
     };
-    const wrongPassword = await median({ identifier: student.matric_no, password: 'Wrong-Password-1!' });
-    const unknownUser = await median({ identifier: 'SCI/2019/9999', password: 'Wrong-Password-1!' });
-
-    // Loose bound: without the dummy hash, unknown users would be ~10x faster.
-    const ratio = unknownUser / wrongPassword;
-    expect(ratio).toBeGreaterThan(0.5);
-    expect(ratio).toBeLessThan(2);
+    const work = {};
+    for (const [name, body] of Object.entries(cases)) {
+      compares.length = 0;
+      expect((await post('/auth/login', body)).status).toBe(401);
+      work[name] = [...compares];
+    }
+    // Exactly one bcrypt compare at cost 10 on every path.
+    for (const name of Object.keys(cases)) expect(work[name]).toEqual([10]);
   });
 });

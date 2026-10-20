@@ -4,7 +4,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const {
-  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, userRow, captureLogs, REGISTERED, PASSWORDS,
+  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, userRow, captureLogs, holdOnlyConnection, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { testUrls } = require('./testEnv');
 const { createHasher } = require('../../app/src/services/passwordHasher');
@@ -174,12 +174,18 @@ describe('temporary lockout (FR-A6, FR-P5) against real PostgreSQL', () => {
         log: { warn: (message) => knexWarnings.push(String(message)) },
       });
       const { lines, logger } = captureLogs();
-      const { post } = await csrfAgent(buildRealApp({ db: tinyDb, redis, logger }));
-      const trx = await tinyDb.transaction(); // hold the only connection
+      let trx;
       try {
+        const { post } = await csrfAgent(buildRealApp({ db: tinyDb, redis, logger }));
+        // Hold the only connection. Timing-independent: retries until held, then
+        // forgets any warnings from that warm-up so only the test's own timeouts are counted.
+        trx = await holdOnlyConnection(tinyDb);
+        knexWarnings.length = 0;
+        lines.length = 0;
         for (let i = 0; i < 6; i += 1) expect((await login(post)).status).toBe(503);
       } finally {
-        await trx.rollback();
+        // Always release and close, even if an assertion above failed.
+        if (trx) await trx.rollback().catch(() => {});
         await tinyDb.destroy();
       }
 
