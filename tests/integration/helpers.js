@@ -161,7 +161,8 @@ const mailpit = {
 };
 
 /** Poll until fn() returns something truthy (for background work such as emails). */
-async function waitFor(fn, { timeoutMs = 5000, intervalMs = 50 } = {}) {
+// The deadline is only a guard against hanging forever, never a timing assertion.
+async function waitFor(fn, { timeoutMs = 30000, intervalMs = 50 } = {}) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const value = await fn();
@@ -210,14 +211,26 @@ async function settleBackgroundWork() {
   await Promise.all(apps.map((app) => app.get('background').idle()));
 }
 
+/** Re-apply the approved role -> service seed mapping (same SQL as the migration). */
+async function restoreSeedPermissions(db) {
+  await db('role_permissions').del();
+  await db.raw(`
+    INSERT INTO role_permissions (role_id, service_id)
+    SELECT r.id, s.id FROM roles r JOIN services s ON
+         (r.name IN ('student', 'staff') AND s.key IN ('fees', 'hostel', 'course_registration'))
+      OR (r.name = 'admin' AND s.key = 'admin_console')`);
+}
+
 /**
- * Empty all data and restore the default policy row. (TRUNCATE ... CASCADE on
- * users also empties policies, because policies.updated_by references users.)
+ * Empty all data and restore the default policy row and permissions.
+ * (TRUNCATE ... CASCADE on users also empties every table that references
+ * users: policies.updated_by, role_permissions.granted_by.)
  */
 async function resetData(db) {
   await db.raw('TRUNCATE users, student_records RESTART IDENTITY CASCADE');
   await db.raw('DELETE FROM policies');
   await db.raw('INSERT INTO policies DEFAULT VALUES');
+  await restoreSeedPermissions(db);
 }
 
 /** Reset, then seed a small known data set. */
@@ -284,6 +297,7 @@ module.exports = {
   buildRealApp,
   resetData,
   resetAndSeed,
+  restoreSeedPermissions,
   listen,
   closeServers,
   settleBackgroundWork,

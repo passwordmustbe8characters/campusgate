@@ -23,6 +23,7 @@ const { createOtpService } = require('./services/otpService');
 const { createTotpService } = require('./services/totpService');
 const { createPasswordService } = require('./services/passwordService');
 const { createMetrics } = require('./services/metrics');
+const { createPermissions } = require('./policies/permissions');
 const { createPasswordController } = require('./controllers/passwordController');
 const { createSecondFactorService } = require('./services/secondFactorService');
 const { createAccountSettingsService } = require('./services/accountSettingsService');
@@ -52,6 +53,7 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock }) 
   });
   const metrics = createMetrics({ redis, logger });
   return {
+    permissions: createPermissions({ db, redis, logger }),
     preauthTickets,
     accountTickets,
     otp,
@@ -125,6 +127,8 @@ function createApp({
 
   // Lets graceful shutdown (and tests) wait for background emails to finish.
   app.set('background', { idle: () => services.passwordService.idle() });
+  // Start-up / shutdown hooks for long-lived resources (permission map subscriber).
+  app.set('services', services);
   return app;
 }
 

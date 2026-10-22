@@ -37,6 +37,8 @@ async function main() {
   }
 
   const app = createApp({ config, logger, db, redis, hasher, delivery });
+  const { permissions } = app.get('services');
+  await permissions.start(); // load role -> service map, subscribe to change notices
 
   const server = app.listen(config.port, () => {
     logger.info(
@@ -60,6 +62,7 @@ async function main() {
     try {
       await new Promise((resolve) => server.close(resolve));
       await app.get('background').idle(); // let queued reset/notification emails finish
+      await permissions.stop();
       await Promise.allSettled([db.destroy(), redis.quit(), delivery.close && delivery.close()]);
       clearTimeout(forceExit);
       process.exit(0);

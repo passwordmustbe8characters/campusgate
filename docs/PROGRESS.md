@@ -656,6 +656,8 @@ Mailpit (every email the app sends): **http://localhost:8025**. App: **http://lo
 
 - Fixed sleeps that remain (1.1 s against a 1 s Redis cooldown) are lower bounds, so a busy machine can only make them longer, never cause a false failure.
 
+**Note for the report (FR-A5 timing):** the automated login-failure test checks **"same work done"**, not elapsed time. Every failure path (wrong password, unknown matric, unknown email, inactive account, locked account) performs exactly one bcrypt check at cost 10, so there is no timing difference to observe. **Real response timing of these paths will be measured manually in Phase 9** (security tests), on a quiet machine, and reported there.
+
 **Which test fails if database error details reach the logs:**
 - **Integration:** `tests/integration/system.test.js` › "database error details (pg `detail` with a token hash) never reach the logs of the real app". It takes a **genuine** PostgreSQL unique-violation error whose `detail` contains a token-hash value and pushes it through the real app's request logger and error handler. Then it asserts the error code is logged but the value is not.
   - Mutation check: removing the serializer from the app's pino-http setup makes this test fail on exactly that value.
