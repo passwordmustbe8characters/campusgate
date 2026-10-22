@@ -4,7 +4,7 @@ const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 const {
-  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, userRow, captureLogs, holdOnlyConnection, REGISTERED, PASSWORDS,
+  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, userRow, captureLogs, holdOnlyConnection, testAudit, cliEnv, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { testUrls } = require('./testEnv');
 const { createHasher } = require('../../app/src/services/passwordHasher');
@@ -86,7 +86,7 @@ describe('temporary lockout (FR-A6, FR-P5) against real PostgreSQL', () => {
     for (let i = 0; i < 5; i += 1) await login(post);
     expect((await listLockedUsers(db)).map((u) => u.matric_or_staff_id)).toEqual([student.matric_no]);
 
-    const row = await unlockUser(db, student.matric_no.toLowerCase());
+    const row = await unlockUser(db, student.matric_no.toLowerCase(), { audit: testAudit(db, redis), ctx: { actor: 'test' } });
     expect(row).toMatchObject({ matric_or_staff_id: student.matric_no, failed_attempts: 0, locked_until: null });
     expect(await listLockedUsers(db)).toEqual([]);
     expect((await login(post, PASSWORDS.student)).status).toBe(200);
@@ -96,7 +96,7 @@ describe('temporary lockout (FR-A6, FR-P5) against real PostgreSQL', () => {
     const { post } = await csrfAgent(app);
     for (let i = 0; i < 5; i += 1) await login(post);
     const cli = (...args) => run(process.execPath, [path.join(ROOT, 'scripts', 'admin-cli.js'), ...args], {
-      cwd: ROOT, env: { ...process.env, DATABASE_URL: testUrls().databaseUrl, LOG_LEVEL: 'silent' },
+      cwd: ROOT, env: cliEnv(),
     });
 
     expect((await cli('locked')).stdout).toContain(student.matric_no);

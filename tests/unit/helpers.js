@@ -13,6 +13,7 @@ const TEST_ENV = {
   BCRYPT_COST: '4',
   TOKEN_HMAC_KEY: Buffer.alloc(32, 1).toString('base64url'),
   TOTP_ENC_KEY: Buffer.alloc(32, 2).toString('base64url'),
+  AUDIT_HMAC_KEY: Buffer.alloc(32, 3).toString('base64url'),
   OTP_DELIVERY_DRIVER: 'console',
 };
 

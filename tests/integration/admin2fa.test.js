@@ -9,7 +9,7 @@ const request = require('supertest');
 const { generate } = require('otplib');
 const {
   connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, cookieFrom, userRow, captureLogs, listen,
-  enableEmail2fa, trackForTeardown, holdOnlyConnection, TEST_KEYS, REGISTERED, PASSWORDS,
+  enableEmail2fa, trackForTeardown, holdOnlyConnection, cliEnv, TEST_KEYS, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { testUrls } = require('./testEnv');
 const { createTicketStore } = require('../../app/src/services/tickets');
@@ -163,7 +163,7 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
   describe('npm run admin -- reset-2fa', () => {
     const cli = (...args) => run(process.execPath, [path.join(ROOT, 'scripts', 'admin-cli.js'), ...args], {
       cwd: ROOT,
-      env: { ...process.env, DATABASE_URL: testUrls().databaseUrl, REDIS_URL: testUrls().redisUrl, LOG_LEVEL: 'silent' },
+      env: cliEnv(),
     });
 
     test('refuses without --confirm and changes nothing', async () => {

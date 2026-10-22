@@ -24,6 +24,7 @@ const { createTotpService } = require('./services/totpService');
 const { createPasswordService } = require('./services/passwordService');
 const { createMetrics } = require('./services/metrics');
 const { createPermissions } = require('./policies/permissions');
+const { createAudit } = require('./audit/audit');
 const { createPasswordController } = require('./controllers/passwordController');
 const { createSecondFactorService } = require('./services/secondFactorService');
 const { createAccountSettingsService } = require('./services/accountSettingsService');
@@ -31,7 +32,10 @@ const { createAuthController } = require('./controllers/authController');
 const { createSettingsController } = require('./controllers/settingsController');
 
 /** Wire services together. Exposed separately so scripts and tests can reuse it. */
-function createServices({ config, logger, db, redis, hasher, delivery, clock }) {
+function createServices({ config, logger, db, redis, hasher, delivery, clock, auditWriter }) {
+  const metrics = createMetrics({ redis, logger });
+  // Audit log (FR-L1/L3). Sync mode unless an auditWriter (queue mode, Phase 3.3) is given.
+  const audit = createAudit({ db, redis, config, logger, metrics, writer: auditWriter });
   const preauthTickets = createTicketStore({
     redis, hmacKey: config.tokenHmacKey, kind: 'preauth', ttlSec: config.preauthTtlSec,
   });
@@ -50,20 +54,21 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock }) 
     verifiers: { totp: totp.verifyLogin, backup: totp.verifyBackupCode },
     maxAttempts: config.preauthMaxAttempts,
     logger,
+    audit,
   });
-  const metrics = createMetrics({ redis, logger });
   return {
     permissions: createPermissions({ db, redis, logger }),
+    audit,
     preauthTickets,
     accountTickets,
     otp,
     totp,
     secondFactor,
     metrics,
-    authService: createAuthService({ db, hasher, logger }),
-    settingsService: createAccountSettingsService({ db, otp, totp, logger }),
+    authService: createAuthService({ db, hasher, logger, audit }),
+    settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
-      db, redis, hasher, delivery, config, tickets: [preauthTickets, accountTickets], metrics, logger,
+      db, redis, hasher, delivery, config, tickets: [preauthTickets, accountTickets], metrics, logger, audit,
     }),
   };
 }

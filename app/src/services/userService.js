@@ -12,20 +12,33 @@ const STATUS_COLUMNS = [
   'two_factor_enabled', 'two_factor_method',
 ];
 
+function requireAudit(audit) {
+  if (!audit || typeof audit.recordCritical !== 'function') {
+    throw new Error('admin actions must be audited: pass { audit, ctx }');
+  }
+}
+
 /**
  * Admin unlock (FR-A6): clears the failure counter and the lock.
  * Returns the updated row, or null when no such user exists.
  *
- * Phase 1 exposes this through the CLI only (scripts/admin-cli.js).
- * TODO(Phase 3): write the unlock to the audit log (who, when, which account).
+ * Audited FAIL CLOSED (FR-L1, FR-Z5): the unlock and its audit row commit
+ * together; if the audit row cannot be written, nothing is unlocked.
+ * CLI only for now (scripts/admin-cli.js).
  * TODO(Phase 6): call this from the admin console (/admin/users/:id/unlock).
  */
-async function unlockUser(db, identifier) {
-  const [row] = await db('users')
-    .where(byIdentifier(identifier))
-    .update({ failed_attempts: 0, locked_until: null })
-    .returning(STATUS_COLUMNS);
-  return row || null;
+async function unlockUser(db, identifier, { audit, ctx = {} } = {}) {
+  requireAudit(audit);
+  return db.transaction(async (trx) => {
+    const [row] = await trx('users')
+      .where(byIdentifier(identifier))
+      .update({ failed_attempts: 0, locked_until: null })
+      .returning(['id', ...STATUS_COLUMNS]);
+    if (!row) return null;
+    await audit.recordCritical(trx, 'admin_unlock', { userId: row.id, success: true, details: { actor: ctx.actor || 'cli' } }, ctx);
+    const { id, ...status } = row;
+    return status;
+  });
 }
 
 /**
@@ -33,10 +46,10 @@ async function unlockUser(db, identifier) {
  * and open OTP codes. The user (an admin must re-enrol TOTP at next sign-in,
  * FR-A13) signs in with the password only until they set 2FA up again.
  * Returns the updated row, or null when no such user exists.
- *
- * TODO(Phase 3): write the reset to the tamper-evident audit log (who, when, which account).
+ * Audited FAIL CLOSED, in the same transaction.
  */
-async function resetTwoFactor(db, identifier) {
+async function resetTwoFactor(db, identifier, { audit, ctx = {} } = {}) {
+  requireAudit(audit);
   return db.transaction(async (trx) => {
     const [row] = await trx('users')
       .where(byIdentifier(identifier))
@@ -45,6 +58,12 @@ async function resetTwoFactor(db, identifier) {
     if (!row) return null;
     const backupCodes = await trx('totp_backup_codes').where({ user_id: row.id }).del();
     await trx('otp_codes').where({ user_id: row.id, used: false }).update({ used: true });
+    await audit.recordCritical(
+      trx,
+      'admin_reset_2fa',
+      { userId: row.id, success: true, details: { actor: ctx.actor || 'cli', backupCodesRemoved: backupCodes } },
+      ctx,
+    );
     return { ...row, backupCodesRemoved: backupCodes };
   });
 }

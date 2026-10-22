@@ -63,7 +63,8 @@ function createTotpService({ db, redis, encKey, hmacKey, clock = { now: () => Da
   }
 
   /** Confirm with one valid code: store the secret, turn 2FA on, return 8 backup codes (shown once). */
-  async function confirmEnrolment(account, code) {
+  /** `beforeCommit(trx)` runs inside the enrolment transaction (used for the fail-closed audit event). */
+  async function confirmEnrolment(account, code, { beforeCommit } = {}) {
     if (hasTotp(account)) throw new EnrolmentError(409, 'Authenticator app is already on.');
     const pending = await redis.get(pendingKey(account.id));
     if (!pending) throw new EnrolmentError(400, 'Set-up expired. Start again.');
@@ -88,6 +89,7 @@ function createTotpService({ db, redis, encKey, hmacKey, clock = { now: () => Da
       await trx('totp_backup_codes').insert(
         codes.map((c) => ({ user_id: account.id, code_hash: hashBackup(account.id, normalizeBackupCode(c)) })),
       );
+      if (beforeCommit) await beforeCommit(trx);
     });
     await redis.del(pendingKey(account.id));
     return { backupCodes: codes };

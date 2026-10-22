@@ -1,5 +1,7 @@
 'use strict';
 
+const { auditContext } = require('../audit/audit');
+
 const REGISTRATION_REJECTED =
   "We couldn't register this account. Check your matric number and email address. " +
   'If you already have an account, sign in instead or contact the registry.';
@@ -35,7 +37,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
 
   async function register(req, res) {
     const { matricNo, email, password } = req.body;
-    const result = await authService.register({ matricNo, email, password }, { log: req.log });
+    const result = await authService.register({ matricNo, email, password }, auditContext(req));
 
     if (result.ok) {
       return res.status(201).json({ message: 'Account created. You can now sign in.' });
@@ -48,7 +50,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
 
   async function login(req, res) {
     const { identifier, password } = req.body;
-    const result = await authService.login({ identifier, password }, { log: req.log });
+    const result = await authService.login({ identifier, password }, auditContext(req));
 
     if (!result.ok) {
       return res.status(401).json({ error: loginFailedMessage(result.policy) });
@@ -65,7 +67,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
     }
 
     // Password correct, second factor pending.
-    const started = await secondFactor.start(result.user, { log: req.log });
+    const started = await secondFactor.start(result.user, auditContext(req));
     cookies.setPreauth(res, started.ticket);
     const body = { status: 'second_factor_required', method: started.method };
     if (started.method === 'email') {
@@ -81,7 +83,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
 
   /** POST /auth/otp, /auth/totp/verify: second step of sign-in. */
   const verifySecondFactor = (method, field) => async (req, res) => {
-    const result = await secondFactor.verify(req.cookies[cookies.names.preauth], method, req.body[field], { log: req.log });
+    const result = await secondFactor.verify(req.cookies[cookies.names.preauth], method, req.body[field], auditContext(req));
     if (result.status === 'signed_in') return signIn(req, res, result.user, ticketDeps);
     if (result.status === 'restart') {
       cookies.clearPreauth(res);
@@ -97,7 +99,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
       : verifySecondFactor('totp', 'code')(req, res);
 
   async function resendOtp(req, res) {
-    const result = await secondFactor.resend(req.cookies[cookies.names.preauth], { log: req.log });
+    const result = await secondFactor.resend(req.cookies[cookies.names.preauth], auditContext(req));
     if (result.status === 'restart') {
       cookies.clearPreauth(res);
       return res.status(401).json({ error: RESTART_MESSAGE, restart: true });

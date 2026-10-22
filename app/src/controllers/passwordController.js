@@ -1,5 +1,6 @@
 'use strict';
 
+const { auditContext } = require('../audit/audit');
 const { PasswordError } = require('../services/passwordService');
 
 // Identical for every email address, existing or not (FR-A9).
@@ -18,13 +19,13 @@ function createPasswordController({ passwordService, cookies }) {
 
   /** Answer first; the lookup and email happen in the background. */
   function forgot(req, res) {
-    passwordService.forgot(req.body.email, { log: req.log });
+    passwordService.forgot(req.body.email, auditContext(req));
     res.status(202).json(FORGOT_RESPONSE);
   }
 
   async function reset(req, res) {
     try {
-      await passwordService.reset(req.body.token, req.body.newPassword, { log: req.log });
+      await passwordService.reset(req.body.token, req.body.newPassword, auditContext(req));
     } catch (err) {
       return respondError(res, err);
     }
@@ -33,7 +34,7 @@ function createPasswordController({ passwordService, cookies }) {
 
   async function change(req, res) {
     try {
-      await passwordService.change(req.account.userId, req.body.currentPassword, req.body.newPassword, { log: req.log });
+      await passwordService.change(req.account.userId, req.body.currentPassword, req.body.newPassword, auditContext(req));
     } catch (err) {
       return respondError(res, err);
     }

@@ -148,6 +148,11 @@ function loadConfig(env = process.env) {
     preauthMaxAttempts: intInRange(env, 'PREAUTH_MAX_ATTEMPTS', 5, 1, 20, errors),
     // Interim settings-only ticket (Phase 2); TODO(Phase 4): delete with the JWT session.
     accountTicketTtlMin: intInRange(env, 'ACCOUNT_TICKET_TTL_MIN', 10, 1, 60, errors),
+
+    // --- Phase 3: audit log ---
+    // Key for the tamper-evident chain (HMAC). Never stored in the database.
+    // Losing or changing it makes existing chains unverifiable.
+    auditHmacKey: key(env, 'AUDIT_HMAC_KEY', { minBytes: 32 }, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {
@@ -159,11 +164,26 @@ function loadConfig(env = process.env) {
   if (config.otpDeliveryDriver === 'sms-mock' && nodeEnv === 'production') {
     errors.push('OTP_DELIVERY_DRIVER=sms-mock keeps codes in a plain Redis list and is refused when NODE_ENV=production');
   }
-  const secrets = [env.CSRF_SECRET, env.TOKEN_HMAC_KEY, env.TOTP_ENC_KEY].filter(Boolean);
+  const secrets = [env.CSRF_SECRET, env.TOKEN_HMAC_KEY, env.TOTP_ENC_KEY, env.AUDIT_HMAC_KEY].filter(Boolean);
   if (new Set(secrets).size !== secrets.length) {
-    errors.push('CSRF_SECRET, TOKEN_HMAC_KEY and TOTP_ENC_KEY must all be different');
+    errors.push('CSRF_SECRET, TOKEN_HMAC_KEY, TOTP_ENC_KEY and AUDIT_HMAC_KEY must all be different');
   }
 
+  fail(errors);
+  return Object.freeze(config);
+}
+
+/**
+ * Settings for command-line tools that write audit events (admin CLI, audit
+ * CLI) without loading the whole app config.
+ */
+function loadAuditConfig(env = process.env) {
+  const errors = [];
+  const config = {
+    databaseUrl: required(env, 'DATABASE_URL', errors),
+    redisUrl: env.REDIS_URL || undefined,
+    auditHmacKey: key(env, 'AUDIT_HMAC_KEY', { minBytes: 32 }, errors),
+  };
   fail(errors);
   return Object.freeze(config);
 }
@@ -190,4 +210,4 @@ function loadSeedConfig(env = process.env) {
   return Object.freeze(config);
 }
 
-module.exports = { loadConfig, loadSeedConfig, loadEnvFile, BCRYPT_MIN_COST, DELIVERY_DRIVERS };
+module.exports = { loadConfig, loadSeedConfig, loadAuditConfig, loadEnvFile, BCRYPT_MIN_COST, DELIVERY_DRIVERS };

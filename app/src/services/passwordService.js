@@ -4,7 +4,7 @@ const { getPolicy } = require('../policies/policyRepo');
 const { checkPassword } = require('./passwordPolicy');
 const { normalizeEmail } = require('./identity');
 const { keyedHash, randomToken } = require('./secrets');
-const { recordFailure, loadAccount, logFailure } = require('./accountState');
+const { recordFailure, loadAccount, noteFailure } = require('./accountState');
 const { safeError } = require('./metrics');
 
 class PasswordError extends Error {
@@ -34,8 +34,11 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/; // 32 bytes, base64url
  * - reset() and change() revoke the user's pre-auth and account tickets and
  *   send a "password changed" email without blocking the request.
  *   TODO(Phase 4): also revoke the user's sessions (FR-A10 "log out other sessions").
+ * - Audit (FR-L1): reset and change are account-security changes, recorded in
+ *   the SAME transaction as the password update (fail closed). Reset requests
+ *   and email failures are high volume (fail open).
  */
-function createPasswordService({ db, redis, hasher, delivery, config, tickets, metrics, logger }) {
+function createPasswordService({ db, redis, hasher, delivery, config, tickets, metrics, logger, audit }) {
   const hashToken = (token) => keyedHash(config.tokenHmacKey, 'reset', token);
 
   // Background work in flight (reset emails, notifications). Graceful shutdown
@@ -74,17 +77,20 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
       }));
   }
 
-  async function sendResetEmail(rawEmail, log) {
+  async function sendResetEmail(rawEmail, ctx) {
+    const { log } = ctx;
     const email = normalizeEmail(rawEmail);
     const set = await redis.set(emailCooldownKey(email), '1', 'EX', config.resetCooldownSec, 'NX');
     if (set !== 'OK') {
       log.info({ event: 'reset_request_cooldown' }, 'reset request ignored (cooldown)');
+      await audit.record('reset_requested', { subject: email, success: false, details: { outcome: 'cooldown' } }, ctx);
       return 'cooldown';
     }
 
     const user = await db('users').where({ email }).first('id', 'email', 'matric_or_staff_id', 'is_active');
     if (!user || !user.is_active) {
       log.info({ event: 'reset_request_no_account' }, 'reset requested for an email with no active account');
+      await audit.record('reset_requested', { subject: email, success: false, details: { outcome: 'no_account' } }, ctx);
       return 'no_account';
     }
 
@@ -112,6 +118,7 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
     });
     await metrics.incr('reset_emails_sent');
     log.info({ event: 'reset_email_sent', userId: user.id }, 'reset email sent');
+    await audit.record('reset_requested', { userId: user.id, subject: email, success: true, details: { outcome: 'sent' } }, ctx);
     return 'sent';
   }
 
@@ -119,12 +126,13 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
    * Start the background work and return immediately. `done` resolves when it
    * finishes (tests await it; the HTTP handler does not).
    */
-  function forgot(email, { log = logger } = {}) {
+  function forgot(email, ctx = { log: logger }) {
     const done = track(new Promise((resolve) => setImmediate(resolve))
-      .then(() => sendResetEmail(email, log))
+      .then(() => sendResetEmail(email, ctx))
       .catch(async (err) => {
         await metrics.incr('reset_email_failures');
-        log.error({ event: 'reset_email_failed', error: safeError(err) }, 'reset email could not be sent');
+        ctx.log.error({ event: 'reset_email_failed', error: safeError(err) }, 'reset email could not be sent');
+        await audit.record('reset_email_failed', { subject: email, success: false }, ctx);
         return 'failed';
       }));
     return { done };
@@ -135,7 +143,8 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
     if (problems.length > 0) throw new PasswordError(400, 'Please correct the highlighted fields.', { [field]: problems });
   }
 
-  async function reset(token, newPassword, { log = logger } = {}) {
+  async function reset(token, newPassword, ctx = { log: logger }) {
+    const { log } = ctx;
     const invalid = () => new PasswordError(400, 'This reset link is invalid or has expired. Request a new one.');
     if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) throw invalid();
     assertPolicy(newPassword, await getPolicy(db), 'newPassword');
@@ -160,6 +169,8 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
       await trx('password_reset_tokens').where({ user_id: row.user_id, used: false }).update({ used: true });
       // Clear any lockout; 2FA settings are deliberately left untouched.
       await trx('users').where({ id: row.user_id }).update({ password_hash: passwordHash, failed_attempts: 0, locked_until: null });
+      // Fail closed: if the audit row cannot be written, the reset rolls back (token not used up).
+      await audit.recordCritical(trx, 'password_reset', { userId: row.user_id, success: true }, ctx);
       return row.user_id;
     });
 
@@ -169,7 +180,8 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
     return { userId, notified };
   }
 
-  async function change(userId, currentPassword, newPassword, { log = logger } = {}) {
+  async function change(userId, currentPassword, newPassword, ctx = { log: logger }) {
+    const { log } = ctx;
     const account = await loadAccount(db, userId);
     if (!account || !account.is_active || account.is_locked) throw new PasswordError(401, 'Please sign in again.');
     const user = await db('users').where({ id: userId }).first('id', 'password_hash');
@@ -177,12 +189,17 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
     if (!(await hasher.compare(currentPassword, user.password_hash))) {
       // A wrong current password is a credential failure like any other.
       const result = await recordFailure(db, userId, await getPolicy(db));
-      logFailure(log, userId, result, { reason: 'bad_current_password' });
+      await noteFailure(audit, ctx, userId, result, { reason: 'bad_current_password', stage: 'password_change' }, 'password_change_failed');
       throw new PasswordError(400, 'Please correct the highlighted fields.', { currentPassword: ['Current password is not correct.'] });
     }
     assertPolicy(newPassword, await getPolicy(db), 'newPassword');
 
-    await db('users').where({ id: userId }).update({ password_hash: await hasher.hash(newPassword) });
+    const passwordHash = await hasher.hash(newPassword);
+    await db.transaction(async (trx) => {
+      await trx('users').where({ id: userId }).update({ password_hash: passwordHash });
+      // Fail closed: if the audit row cannot be written, the change rolls back.
+      await audit.recordCritical(trx, 'password_changed', { userId, success: true }, ctx);
+    });
     await revokeTickets(userId);
     log.info({ event: 'password_changed', userId }, 'password changed');
     const notified = notifyPasswordChanged(account, 'changed in security settings', log);

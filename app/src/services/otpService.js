@@ -84,7 +84,7 @@ function createOtpService({ db, redis, delivery, hmacKey, cooldownSec }) {
     return used === 1 ? 'ok' : 'unavailable';
   }
 
-  return { issue, verify };
+  return { issue, verify, channel: delivery.name };
 }
 
 module.exports = { createOtpService, CooldownError, OTP_TTL_MIN, OTP_MAX_ATTEMPTS };

@@ -63,4 +63,34 @@ function logFailure(log, userId, result, extra) {
   }
 }
 
-module.exports = { recordFailure, completeLogin, loadAccount, logFailure };
+/**
+ * Log AND audit one counted credential failure (and the lockout it may cause).
+ * `details`: { reason, stage, method } for login_failure; eventType lets the
+ * password-change path record password_change_failed instead.
+ */
+async function noteFailure(audit, ctx, userId, result, details, eventType = 'login_failure') {
+  logFailure(ctx.log, userId, result, details);
+  const failedAttempts = result ? result.failed_attempts : undefined;
+  await audit.record(
+    eventType,
+    {
+      userId,
+      success: false,
+      details: eventType === 'login_failure' ? { ...details, failedAttempts } : { reason: details.reason },
+    },
+    ctx,
+  );
+  if (result && result.locked_until) {
+    await audit.record(
+      'lockout',
+      {
+        userId,
+        success: true,
+        details: { failedAttempts, lockedUntil: new Date(result.locked_until).toISOString(), stage: details.stage },
+      },
+      ctx,
+    );
+  }
+}
+
+module.exports = { recordFailure, completeLogin, loadAccount, logFailure, noteFailure };

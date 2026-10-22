@@ -12,6 +12,8 @@ const { createLogger } = require('../../app/src/logger');
 const { createApp } = require('../../app/src/app');
 const { createHasher } = require('../../app/src/services/passwordHasher');
 const { DeliveryError } = require('../../app/src/services/delivery');
+const { createAudit } = require('../../app/src/audit/audit');
+const { createMetrics } = require('../../app/src/services/metrics');
 const { seedAll } = require('../../db/seed/lib/seedAll');
 const { generateStudents, studentEmail } = require('../../db/seed/lib/studentData');
 const { testUrls } = require('./testEnv');
@@ -25,6 +27,7 @@ const PASSWORDS = Object.freeze({
 const TEST_KEYS = Object.freeze({
   tokenHmacKey: Buffer.alloc(32, 11).toString('base64url'),
   totpEncKey: Buffer.alloc(32, 12).toString('base64url'),
+  auditHmacKey: Buffer.alloc(32, 13).toString('base64url'),
 });
 
 // Small seed for most tests: 3 registered + 3 free students, plus staff and admin.
@@ -176,6 +179,27 @@ async function waitFor(fn, { timeoutMs = 30000, intervalMs = 50 } = {}) {
 const enableEmail2fa = (db, matric) =>
   db('users').where({ matric_or_staff_id: matric }).update({ two_factor_enabled: true, two_factor_method: 'email' });
 
+/** Audit service against the test database (for calling admin functions directly). */
+function testAudit(db, redis, { logger = createLogger({ level: 'silent' }) } = {}) {
+  const config = {
+    auditHmacKey: Buffer.from(TEST_KEYS.auditHmacKey, 'base64url'),
+    tokenHmacKey: Buffer.from(TEST_KEYS.tokenHmacKey, 'base64url'),
+  };
+  return createAudit({ db, redis, config, logger, metrics: createMetrics({ redis, logger }) });
+}
+
+/** Environment for spawning the CLI scripts against the test database and Redis. */
+function cliEnv(extra = {}) {
+  return {
+    ...process.env,
+    DATABASE_URL: testUrls().databaseUrl,
+    REDIS_URL: testUrls().redisUrl,
+    AUDIT_HMAC_KEY: TEST_KEYS.auditHmacKey,
+    LOG_LEVEL: 'silent',
+    ...extra,
+  };
+}
+
 /** Real app against the test PostgreSQL database and Redis DB 15. */
 function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureDelivery(), clock } = {}) {
   const { databaseUrl, redisUrl } = testUrls();
@@ -187,6 +211,7 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     BCRYPT_COST: '4',
     TOKEN_HMAC_KEY: TEST_KEYS.tokenHmacKey,
     TOTP_ENC_KEY: TEST_KEYS.totpEncKey,
+    AUDIT_HMAC_KEY: TEST_KEYS.auditHmacKey,
     ...env,
   });
   const app = createApp({
@@ -231,6 +256,21 @@ async function resetData(db) {
   await db.raw('DELETE FROM policies');
   await db.raw('INSERT INTO policies DEFAULT VALUES');
   await restoreSeedPermissions(db);
+  await clearAuditLog(db);
+}
+
+/**
+ * Empty the append-only audit log between tests. Only possible because the
+ * test connects as the table OWNER, who can switch the triggers off (the
+ * Phase 9 limited app role will not be able to). Tests that check the chain
+ * also flush Redis so the outside anchor starts empty.
+ */
+async function clearAuditLog(db) {
+  await db.transaction(async (trx) => {
+    await trx.raw('ALTER TABLE auth_logs DISABLE TRIGGER auth_logs_no_truncate');
+    await trx.raw('TRUNCATE auth_logs');
+    await trx.raw('ALTER TABLE auth_logs ENABLE TRIGGER auth_logs_no_truncate');
+  });
 }
 
 /** Reset, then seed a small known data set. */
@@ -298,6 +338,9 @@ module.exports = {
   resetData,
   resetAndSeed,
   restoreSeedPermissions,
+  clearAuditLog,
+  testAudit,
+  cliEnv,
   listen,
   closeServers,
   settleBackgroundWork,

@@ -6,13 +6,14 @@
 //   npm run admin -- locked
 //   npm run admin -- reset-2fa <matric/staff ID or email> --confirm
 //
-// TODO(Phase 3): record each unlock and 2FA reset in the tamper-evident audit log.
+// Every change is written to the tamper-evident audit log in the same database
+// transaction (fail closed): if the audit row cannot be written, nothing changes.
 
 const pino = require('pino');
 const Redis = require('ioredis');
 const { loadEnvFile } = require('../app/src/config');
 const { createLogger } = require('../app/src/logger');
-const { createDb } = require('../app/src/db/knex');
+const { createCliAudit } = require('../app/src/audit/cliAudit');
 const { createTicketStore } = require('../app/src/services/tickets');
 const { unlockUser, resetTwoFactor, getUserStatus, listLockedUsers } = require('../app/src/services/userService');
 
@@ -38,12 +39,12 @@ async function revokeTickets(userId) {
   }
 }
 
-async function run(args, db, logger) {
+async function run(args, { db, audit, ctx }, logger) {
   const [command, identifier, ...flags] = args;
   switch (command) {
     case 'unlock': {
       if (!identifier) return { code: 2, out: USAGE };
-      const row = await unlockUser(db, identifier);
+      const row = await unlockUser(db, identifier, { audit, ctx });
       if (!row) return { code: 1, out: `No user found for "${identifier}".` };
       logger.info({ event: 'admin_unlock', actor: 'cli', target: row.matric_or_staff_id }, 'account unlocked');
       return { code: 0, out: `Unlocked ${row.matric_or_staff_id} (failed attempts reset to 0).` };
@@ -57,7 +58,7 @@ async function run(args, db, logger) {
             'Re-run with --confirm to do it.',
         };
       }
-      const row = await resetTwoFactor(db, identifier);
+      const row = await resetTwoFactor(db, identifier, { audit, ctx });
       if (!row) return { code: 1, out: `No user found for "${identifier}".` };
       const tickets = await revokeTickets(row.id);
       logger.info({ event: 'admin_reset_2fa', actor: 'cli', target: row.matric_or_staff_id, tickets }, 'two-factor reset');
@@ -96,13 +97,13 @@ async function main() {
   }
   // Structured log lines go to stderr so stdout stays clean for the command's output.
   const logger = createLogger({ level: process.env.LOG_LEVEL || 'info', destination: pino.destination(2) });
-  const db = createDb({ databaseUrl: process.env.DATABASE_URL, dbPoolMax: 1 }, logger);
+  const cli = createCliAudit({ logger });
   try {
-    const { code, out } = await run(process.argv.slice(2), db, logger);
+    const { code, out } = await run(process.argv.slice(2), cli, logger);
     (code === 0 ? console.log : console.error)(out);
     process.exitCode = code;
   } finally {
-    await db.destroy();
+    await cli.close();
   }
 }
 

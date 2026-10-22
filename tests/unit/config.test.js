@@ -5,6 +5,7 @@ const { TEST_ENV } = require('./helpers');
 
 const KEY_A = Buffer.alloc(32, 7).toString('base64url');
 const KEY_B = Buffer.alloc(32, 9).toString('base64');
+const KEY_C = Buffer.alloc(32, 5).toString('base64url');
 
 const MINIMAL = {
   DATABASE_URL: 'postgres://x',
@@ -12,6 +13,7 @@ const MINIMAL = {
   CSRF_SECRET: 'x'.repeat(32),
   TOKEN_HMAC_KEY: KEY_A,
   TOTP_ENC_KEY: KEY_B,
+  AUDIT_HMAC_KEY: KEY_C,
 };
 
 describe('loadConfig', () => {
@@ -78,8 +80,15 @@ describe('Phase 2 keys and delivery settings', () => {
     expect(() => loadConfig({ ...MINIMAL, [name]: value })).toThrow(message);
   });
 
-  test('the three secrets must all be different', () => {
+  test('all secrets must be different', () => {
     expect(() => loadConfig({ ...MINIMAL, TOTP_ENC_KEY: KEY_A })).toThrow(/must all be different/);
+    expect(() => loadConfig({ ...MINIMAL, AUDIT_HMAC_KEY: KEY_A })).toThrow(/must all be different/);
+  });
+
+  test('AUDIT_HMAC_KEY is required at startup and must be at least 32 bytes', () => {
+    const { AUDIT_HMAC_KEY, ...rest } = MINIMAL;
+    expect(() => loadConfig(rest)).toThrow(/AUDIT_HMAC_KEY is required/);
+    expect(() => loadConfig({ ...MINIMAL, AUDIT_HMAC_KEY: Buffer.alloc(16).toString('base64') })).toThrow(/AUDIT_HMAC_KEY must decode to at least 32 bytes/);
   });
 
   test('defaults: email driver, 30-minute reset tokens, 60 s cooldowns, 5 ticket attempts', () => {

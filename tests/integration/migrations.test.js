@@ -3,7 +3,7 @@
 const { connectDb } = require('./helpers');
 
 const TABLES = [
-  'otp_codes', 'password_reset_tokens', 'policies', 'role_permissions', 'roles', 'services', 'student_records',
+  'auth_logs', 'otp_codes', 'password_reset_tokens', 'policies', 'role_permissions', 'roles', 'services', 'student_records',
   'totp_backup_codes', 'users',
 ];
 
