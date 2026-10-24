@@ -109,10 +109,9 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
   });
 
   test('a newer request invalidates older tokens', async () => {
-    const env = { RESET_COOLDOWN_SEC: '1' };
-    const first = await obtainToken({ env });
-    await new Promise((r) => setTimeout(r, 1100));
-    const second = await obtainToken({ env });
+    const first = await obtainToken();
+    await redis.flushdb(); // end the reset cooldown now (no tickets are needed here), instead of sleeping
+    const second = await obtainToken();
     expect((await first.post('/auth/password/reset', { token: first.token, newPassword: NEW_PASSWORD })).status).toBe(400);
     expect((await second.post('/auth/password/reset', { token: second.token, newPassword: NEW_PASSWORD })).status).toBe(200);
   });

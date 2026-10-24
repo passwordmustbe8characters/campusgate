@@ -134,7 +134,7 @@ describe('audit log (FR-L1, FR-L3) in sync mode, against real PostgreSQL + Redis
 
     const result = await verifyChain(db, AUDIT_KEY, { anchor: await readAnchor(redis) });
     expect(result).toMatchObject({ ok: true, checked: all.length });
-  });
+  }, 300000); // hang guard only: dozens of bcrypt hashes + two CLI processes on a busy machine
 
   test('lockout is recorded when the fifth wrong password locks the account', async () => {
     const { post } = await agentFor();
@@ -226,12 +226,13 @@ describe('audit log (FR-L1, FR-L3) in sync mode, against real PostgreSQL + Redis
       const { post } = await agentFor();
       await post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
       const start = await post('/auth/totp/enrol');
-      await db('users').where({ matric_or_staff_id: student.matric_no })
-        .update({ failed_attempts: 5, locked_until: db.raw("now() + interval '15 minutes'") });
 
       await withAuditWritesFailing(db, async () => {
         const res = await post('/auth/totp/enrol/confirm', { code: await totpAt(start.body.secret) });
         expect(res.status).toBe(503);
+        // Lock the account only now (a locked account cannot use security settings at all).
+        await db('users').where({ matric_or_staff_id: student.matric_no })
+          .update({ failed_attempts: 5, locked_until: db.raw("now() + interval '15 minutes'") });
         await expect(run(process.execPath, [path.join(ROOT, 'scripts', 'admin-cli.js'), 'unlock', student.matric_no], { cwd: ROOT, env: cliEnv() }))
           .rejects.toMatchObject({ code: 1 });
       });

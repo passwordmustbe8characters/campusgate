@@ -117,7 +117,7 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     async function probe(ticket) {
       const config = loadConfig({
         NODE_ENV: 'test', DATABASE_URL: 'postgres://x', REDIS_URL: 'redis://x', CSRF_SECRET: 'x'.repeat(32),
-        TOKEN_HMAC_KEY: TEST_KEYS.tokenHmacKey, TOTP_ENC_KEY: TEST_KEYS.totpEncKey,
+        TOKEN_HMAC_KEY: TEST_KEYS.tokenHmacKey, TOTP_ENC_KEY: TEST_KEYS.totpEncKey, AUDIT_HMAC_KEY: TEST_KEYS.auditHmacKey,
       });
       const accountTickets = createTicketStore({ redis, hmacKey: config.tokenHmacKey, kind: 'acct', ttlSec: 600 });
       const app = express();

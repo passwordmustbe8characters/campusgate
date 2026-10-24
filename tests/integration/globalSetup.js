@@ -53,11 +53,20 @@ module.exports = async () => {
     redis.disconnect();
   }
 
+  // Mailpit: "not running" (connection refused) fails at once; a slow answer on a
+  // busy machine is retried. This checks reachability, it does not measure speed.
   const mailpitUrl = process.env.MAILPIT_URL || 'http://127.0.0.1:8025';
-  try {
-    const res = await fetch(`${mailpitUrl}/api/v1/info`, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  } catch (err) {
-    throw new Error(`Cannot reach Mailpit at ${mailpitUrl} (${describe(err)}).\n${HOW_TO_START}`);
+  const attempts = 4;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const res = await fetch(`${mailpitUrl}/api/v1/info`, { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      break;
+    } catch (err) {
+      const slow = err.name === 'TimeoutError' || err.name === 'AbortError';
+      if (!slow || attempt >= attempts) {
+        throw new Error(`Cannot reach Mailpit at ${mailpitUrl} (${describe(err)}).\n${HOW_TO_START}`);
+      }
+    }
   }
 };

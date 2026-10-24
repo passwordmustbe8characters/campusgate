@@ -6,7 +6,6 @@ const {
 } = require('./helpers');
 const { RESTART_MESSAGE, INVALID_CODE_MESSAGE } = require('../../app/src/controllers/authController');
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redis', () => {
   let db;
@@ -36,6 +35,12 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
   }
 
   const openCode = async () => db('otp_codes').where({ used: false }).orderBy('id', 'desc').first();
+
+  /** End the resend cooldown now (deletes the key whose expiry ends it), instead of sleeping. */
+  const expireLoginCooldown = async () => {
+    const { id } = await userRow(db, student.matric_no);
+    expect(await redis.del(`cg:cooldown:otp:login:${id}`)).toBe(1);
+  };
 
   test('correct password on a 2FA account gives a pre-auth ticket and a code, not a sign-in', async () => {
     await db('users').where({ matric_or_staff_id: student.matric_no }).update({ failed_attempts: 2 });
@@ -122,11 +127,10 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
   });
 
   test('second-factor failures lock the account like wrong passwords (5 in total)', async () => {
-    const env = { OTP_RESEND_COOLDOWN_SEC: '1' };
-    const first = await passwordStep({ env });
+    const first = await passwordStep();
     const wrong1 = first.delivery.lastCode() === '000000' ? '111111' : '000000';
     for (let i = 0; i < 3; i += 1) await first.post('/auth/otp', { code: wrong1 });
-    await sleep(1100);
+    await expireLoginCooldown();
     expect((await first.post('/auth/otp/resend')).status).toBe(200);
     const wrong2 = first.delivery.lastCode() === '000000' ? '111111' : '000000';
     for (let i = 0; i < 2; i += 1) await first.post('/auth/otp', { code: wrong2 });
@@ -140,14 +144,15 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
   });
 
   test('resend cancels the old code; immediate resend hits the cooldown (429 + Retry-After)', async () => {
-    const { post, delivery } = await passwordStep({ env: { OTP_RESEND_COOLDOWN_SEC: '1' } });
+    // Default 60 s cooldown: "immediately" can never take that long, however busy the machine.
+    const { post, delivery } = await passwordStep();
     const oldCode = delivery.lastCode();
 
     const tooSoon = await post('/auth/otp/resend');
     expect(tooSoon.status).toBe(429);
     expect(Number(tooSoon.headers['retry-after'])).toBeGreaterThanOrEqual(1);
 
-    await sleep(1100);
+    await expireLoginCooldown(); // what the cooldown's expiry does, without waiting for it
     expect((await post('/auth/otp/resend')).status).toBe(200);
     const newCode = delivery.lastCode();
     expect(delivery.sent).toHaveLength(2);
@@ -197,6 +202,7 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
     const config = loadConfig({
       NODE_ENV: 'test', DATABASE_URL: 'postgres://x', REDIS_URL: 'redis://x', CSRF_SECRET: 'x'.repeat(32),
       TOKEN_HMAC_KEY: Buffer.alloc(32, 1).toString('base64'), TOTP_ENC_KEY: Buffer.alloc(32, 2).toString('base64'),
+      AUDIT_HMAC_KEY: Buffer.alloc(32, 3).toString('base64'),
       OTP_DELIVERY_DRIVER: 'sms-mock',
     });
     const sms = createDelivery(config, { redis });
