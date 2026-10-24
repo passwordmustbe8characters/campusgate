@@ -9,7 +9,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 0 | Scaffold | Done (Docker verified 2026-10-11) |
 | 1 | Core authentication | Done 2026-10-11 (FR-A6 partial until Phases 3 and 6) |
 | 2 | Second factors and recovery | Done 2026-10-17 (FR-A10 and FR-A13 PARTIAL until Phases 4 and 6) |
-| 3 | Authorization and audit logs | Not started |
+| 3 | Authorization and audit logs | Done 2026-10-24 (sync audit mode; FR-Z1, L3, L4 PARTIAL until Phases 4 and 6; queue mode = future work) |
 | 4 | Sessions, token, mock portal | Not started |
 | 5 | Peak-load core | Not started |
 | 6 | Admin console | Not started |
@@ -31,13 +31,20 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 2026-10-11 | `package-lock.json` is always regenerated inside `node:24-slim` (see README "Changing dependencies"). | Keeps `npm ci` in the Docker build working (see Phase 0 fix). |
 | 2026-10-17 | New packages: check `npm view <pkg> time` (and Docker Hub tags for images); nothing published in the last 14 days; pin exact versions so a later lock regeneration cannot pull in a newer release. | Developer requirement (Phase 2). |
 | 2026-10-17 | Phases are built in sub-steps, one commit each, with the full `npm test` run after each. | Developer requirement (Phase 2). |
+| 2026-10-24 | While developing, run only the test files that were touched; run the full suite once at the end of a phase and report per-suite times. | Developer requirement: a full run took ~23 min on the loaded machine. |
+| 2026-10-24 | Git: backend commits go to `main` (fast-forwarded and pushed); the developer's UI work lives on `ui-polish` and is never staged by the assistant. Stage named files only, never `git add -A`. `.env` is not tracked (`git ls-files` lists only `.env.example`). | Developer requirement. |
+| 2026-10-24 | Audit log runs in **sync mode only** (`AUDIT_MODE=sync`). The queue mode (Redis Stream + single writer) is designed and prototyped on branch `audit-queue-experimental`, **not enabled**: future work. Nothing was added to docker-compose. | Developer decision (keep Phase 3 small). |
 
 ## Open items handed to later phases
 
 | For phase | Item |
 |---|---|
-| 3 | Write admin unlocks to the tamper-evident audit log (unlock is CLI-only and only in the app log for now). Also log registration/login/lockout events there (currently pino log lines only). |
-| 3 | Audit-log the Phase 2 events too: `admin_reset_2fa` (CLI), OTP sent/verified, 2FA enabled, TOTP enrolled, backup code used, password reset/changed, admin enrolment required. All are pino log lines today. |
+| ~~3~~ | ~~Audit-log admin unlocks and all Phase 1/2 events~~: **done in Phase 3** (see Phase 3 section). |
+| 4 | Audit events for sign-out, sign-out-everywhere and session revocation; session records (FR-L2). Protect the portal routes with `requirePermission` (FR-Z1). |
+| 6 | Admin console screens for the audit log: "Verify integrity" button (FR-L3), logs viewer with filters and CSV export (FR-L4), using the existing `verifyChain`, `iterateRows` and `csv` modules. Policy/role/permission editing UI calling `adminChangeService` (FR-Z5). |
+| 8 | **Measure the audit cost on the login path** (sync mode: every login waits on the chain's advisory lock). `calibrate` should report login latency/throughput with the audit write. If it is a bottleneck, the queue-mode prototype (branch `audit-queue-experimental`) is the planned remedy; Redis AOF (`appendfsync everysec`, with a volume) would then be needed and its cost measured too. |
+| 9 | A limited application database role that cannot `ALTER TABLE auth_logs DISABLE TRIGGER`: today the app connects as the table owner, who can switch the append-only triggers off (the hash chain still detects any change made that way). |
+| 9 | **Known limit of the outside anchor.** The anchor (latest seq + hash, in Redis) catches deletion of the newest rows only **until the app writes past the old anchored position**: new events link correctly to the shortened chain, and the anchor then moves forward to the new head, so the deletion is no longer visible. Run `audit verify` regularly (Phase 6 button, or a scheduled job) to narrow that window; a stronger fix is an append-only history of anchors kept outside the database (for example periodic anchors written to a file or another system). |
 | 4 | **Delete the interim account ticket** (`cg.acct`, `app/src/middleware/tickets.js`) and use the JWT session, with a "signed in recently" check for security settings. |
 | 4 | FR-A10 / reset: revoke the user's **sessions** after a password reset or change (today only pre-auth and account tickets are revoked). |
 | 4 | Bind CSRF tokens to the session (JWT `jti`) instead of the pre-session cookie. |
@@ -49,7 +56,8 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 6 | Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service; a 2FA reset button calling `resetTwoFactor`; dashboard counters from `cg:metrics:*` in Redis. |
 | 7 | Enforce email verification (FR-A2); `users.email_verified` already exists and is `false` for new sign-ups. |
 | 8 | `calibrate` must include the **OTP step time** (send + verify) as well as bcrypt and DB time. |
-| 9 | Check the registration privacy notice wording against the Nigeria Data Protection Act 2023 (NFR-5). |
+| 9 | Check the registration privacy notice wording against the Nigeria Data Protection Act 2023 (NFR-5), **including the Phase 3 sentence that full IP addresses are kept in the tamper-evident security log**. |
+| Future | Staff-specific services (staff currently get the same three portal services as students). |
 | 8, 9 | **Unexplained "fetch failed" glitch (seen 2026-10-17).** During the Phase 2 end-to-end script against the running containers, the first HTTP request after several `docker compose exec` CLI calls twice failed client-side with `fetch failed`. The app logged no such request and never restarted; the same requests succeeded when re-run seconds later. A 6.5 s idle keep-alive test did not reproduce it. Suspected: Docker Desktop port forwarding on the Windows host, not the app. Watch for it in the Phase 8 load tests (it would show up as connection errors, not HTTP errors) and record whether it reappears. |
 
 ---
@@ -670,3 +678,218 @@ Mailpit (every email the app sends): **http://localhost:8025**. App: **http://lo
 | 1 | idle | 109 passed | 123 passed | 244 s | none; exited by itself |
 | 2 | idle | 109 passed | 123 passed | 178 s | none; exited by itself |
 | 3 | **CPU stress**: 5 busy threads on 4 logical CPUs, CPU at 100% before and at the end | 109 passed | 123 passed | 852 s (integration 725 s) | none; exited by itself |
+
+---
+
+## Phase 3: Authorization and audit logs (2026-10-22 to 2026-10-24)
+
+| Sub-step | Where | What |
+|---|---|---|
+| 3.1 | `0205a4d` on `main` | `services`, `role_permissions`, in-memory permission map, `requirePermission` middleware |
+| 3.2 | `733c934` (code, checkpointed by the developer) + `a2b3798` (tests and fixes), on `main` | `auth_logs` with keyed hash chain, whitelisted events, sync mode, every Phase 1/2 event wired, fail open / fail closed |
+| 3.3 | branch `audit-queue-experimental` only | Queue mode (Redis Stream + single writer service): **designed and prototyped, not enabled; future work** |
+| 3.4 | `main` (commit "Phase 3.4") | `npm run audit -- verify / search / export`, CSV formula-injection protection, `policy_history`, admin CLI `policy` / `role` / `perm` / `history` |
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-Z1 | **PARTIAL** | `services` + `role_permissions` tables, approved seed mapping, `requirePermission(service)` middleware answering from an in-memory map (no DB read per check) that every app process reloads on a Redis pub/sub notice. **No protected service route exists until the Phase 4 portal pages**; admin routes come with the console (Phase 6). |
+| FR-Z5 | Done for every change path that exists | Policy, role and permission changes (CLI) are logged with who, when, old and new values in `policy_history`, plus an audit event, in one transaction. The admin console editing screens come in Phase 6. |
+| FR-L1 | Done (Phase 1-3 events) | Every event below, with IP and user agent. Sign-out and session events arrive with sessions (Phase 4). |
+| FR-L2 | Not started | Session records come with sessions (Phase 4). |
+| FR-L3 | **PARTIAL** | Keyed hash chain, append-only triggers, outside anchor, `npm run audit -- verify`. The admin "Verify integrity" **button** is Phase 6. |
+| FR-L4 | **PARTIAL** | Search/filter and CSV export through the CLI. The admin logs **screen** is Phase 6. |
+
+### Default permissions (approved)
+| Role | Services |
+|---|---|
+| student | fees, hostel, course_registration |
+| staff | fees, hostel, course_registration ("staff-specific services" = future work) |
+| admin | admin_console only |
+| guest | none (vouchers, Phase 7) |
+
+### Audit log design (sync mode)
+- **Table `auth_logs`:** `seq` (gap-free chain position), `event_id` (unique; makes re-writing an event a no-op), `occurred_at`, `event_type`, `user_id` (no foreign key, so records outlive accounts), `subject_hash`, `ip` (full, as approved), `user_agent` (≤ 256 chars), `success`, `details` (JSON), `prev_hash`, `row_hash`.
+- **Chain:** `row_hash = HMAC-SHA256(AUDIT_HMAC_KEY, prev_hash + canonical row)`. The key lives only in `.env`, never in the database, so someone with database access alone cannot recompute the chain after an edit. **If `AUDIT_HMAC_KEY` is lost or changed, existing chains can no longer be verified** (verify reports `row_hash` at seq 1).
+- **Serialization:** every write takes one PostgreSQL advisory lock, so concurrent writers can never fork the chain (tested with 50 concurrent logins).
+- **Append-only:** database triggers reject `UPDATE`, `DELETE` and `TRUNCATE` on `auth_logs`. **The table owner can still switch the triggers off** (`ALTER TABLE ... DISABLE TRIGGER`), and today the app connects as the owner; a limited app database role is a **Phase 9** item. Any change made that way is still caught by `verify`.
+- **Outside anchor:** after each write the latest `{seq, hash}` is stored in Redis (`cg:audit:head`), because deleting the newest rows cannot be seen from the chain alone. See the open item about this anchor's limit.
+- **What an event may contain:** each event type has a whitelist of detail fields; values must be short plain strings, integers or booleans. Passwords, codes, tokens, secrets, backup codes and email addresses cannot be recorded (the builder rejects them, and a test scans every stored row). A failed login with an unknown identifier stores a keyed hash of what was typed (`subject_hash`), so repeated attempts on one account can be correlated without storing the text.
+
+**Events recorded:** `register`, `login_success` (method: password / email / totp / backup), `login_failure` (reason, stage), `lockout`, `second_factor_required`, `admin_enrolment_required`, `otp_sent`, `otp_delivery_failed`, `otp_verified`, `otp_failed`, `backup_code_used`, `totp_enrolment_started`, `two_factor_enabled`, `reset_requested`, `reset_email_failed`, `password_reset`, `password_changed`, `password_change_failed`, `admin_unlock`, `admin_reset_2fa`, `policy_changed`, `role_changed`, `permission_changed`, `audit_verified`, `audit_exported`.
+
+**What happens when an audit write fails (approved policy):**
+
+| Events | Policy | What the user sees |
+|---|---|---|
+| Logins, OTP, registration, reset requests (high volume) | **Fail open** | The action goes ahead. The event is written to the app log as a marked line (`AUDIT_FALLBACK`, with the full event) and counted in Redis (`cg:metrics:audit_fallback`). |
+| Password reset, password change, 2FA enable, admin unlock / 2FA reset, policy / role / permission changes, audit verify / export | **Fail closed** | The audit row is written in the **same transaction** as the change. If it cannot be written, the change rolls back and the user gets **503** "This change can't be recorded in the audit log right now, so it was not made." (CLI: exit code 1). |
+
+Tested with a genuine PostgreSQL failure (a temporary `CHECK (false)` constraint on `auth_logs`): a login still succeeds with a fallback line; a password change, password reset (token not used up), TOTP enable, CLI unlock and policy change are all refused and nothing changes.
+
+**Fallback import (`import-fallback`): not built** (developer decision, P2). Fallback lines carry the complete event including its `event_id`, so a later importer could append them to the chain idempotently.
+
+**Cost on the login path:** in sync mode every login waits for its audit insert under the chain lock. That cost has **not been measured yet**; it belongs to Phase 8 (`calibrate`).
+
+### Queue mode: designed and prototyped, not enabled (future work)
+Branch `audit-queue-experimental` (pushed) holds:
+- a Redis Stream with a maximum length, where a full queue drops the event with a counter and **never blocks a login**;
+- a single writer that acknowledges entries **only after the database commit**, re-reads its pending entries after a crash and skips them by `event_id` (no loss, no duplicate), and drains gracefully on stop;
+- a writer service entry point with `/health` (queue length and lag);
+- the tests for all of that.
+
+It is **not wired in**: no `AUDIT_MODE=queue`, nothing added to docker-compose, and Redis AOF was not enabled (it is only needed for the queue). The branch's tests need that wiring before they can pass. If Phase 8 shows the sync audit write is a rush-hour bottleneck, this is the prepared remedy.
+
+### Commands
+```bash
+npm run audit -- verify
+npm run audit -- search [--type EVENT] [--user ID|EMAIL] [--from 2026-10-24] [--to 2026-10-25] [--success true|false] [--ip ADDRESS] [--limit N]
+npm run audit -- export --out audit.csv [same filters]
+npm run admin -- policy show
+npm run admin -- policy set max_attempts=3 lockout_minutes=20 --confirm
+npm run admin -- role set <ID or email> <student|staff|guest|admin> --confirm
+npm run admin -- perm list
+npm run admin -- perm grant|revoke <role> <service> --confirm
+npm run admin -- history [N]
+```
+- Inside Docker, prefix with `docker compose exec app`.
+- Every change command needs `--confirm`.
+- `require_2fa_admin` cannot be changed (FR-A13).
+- Out-of-range values are refused by the database's CHECK constraints, with nothing recorded.
+- A policy change applies to the next request (no restart).
+- A permission change is announced to running app processes, which reload their map at once.
+- A role change revokes the user's tickets, so they sign in again.
+
+**CSV export:**
+- Columns: `seq, occurred_at, event_type, success, user_id, subject_hash, ip, user_agent, details, row_hash`.
+- Standard CSV quoting, plus formula-injection protection: a cell starting with `=` `+` `-` `@`, a tab or a carriage return gets a leading `'`. This matters because the user agent of a failed login is attacker-controlled.
+- An export is itself audited; if that record cannot be written, the file is deleted and the command fails.
+
+### Measured numbers
+- **`verify` speed** (test database, this laptop, 3 runs each, pages of 5,000 rows):
+
+| Rows | Median | Runs | Rate |
+|---|---|---|---|
+| 3,000 | **306 ms** | 284 / 306 / 415 ms | ≈ 9,800 rows/s |
+| 20,000 | **1,353 ms** | 1,336 / 1,353 / 1,408 ms | ≈ 14,800 rows/s |
+
+  Memory does not grow with the table (rows are streamed page by page). Per the developer's decision, no 100,000-row test was run.
+- **Machine load investigation (2026-10-24), before the last runs:**
+  - The machine was out of memory: RAM 94% used (0.9 GB of 15.9 GB free), 24 of 32 GB committed, so Windows was paging.
+  - CPU was at 100% with no tests running. The biggest users were the ReasonLabs antivirus engine (`rsEngineSvc`, ~20% CPU), Windows Search (`SearchIndexer`, ~18.5%), and Chrome (23 processes, 2.5 GB RAM, ~13% CPU). VS Code used 1.9 GB and the WSL VM that runs Docker 2.0 GB.
+  - The four containers together used only ~110 MB.
+  - Suggested (not changed): close Chrome/Edge/Antigravity during test runs; exclude the project folder (`node_modules` especially) from the antivirus's real-time scanning and from Windows Search indexing.
+- **Final full test run (2026-10-24, end of 3.4):** **unit 131/131, integration 160/160 passed**, 331 s in total (unit 14 s, integration 317 s), no console noise. That is far faster than the 23-minute run earlier the same day, when the machine was heavily loaded.
+
+| Integration suite | Time | Integration suite | Time |
+|---|---|---|---|
+| auditTools | 65.6 s | mailpit | 14.1 s |
+| lockout | 43.3 s | emailOtp | 9.8 s |
+| admin2fa | 37.7 s | seed | 6.4 s |
+| totp | 36.3 s | register | 6.0 s |
+| passwordReset | 35.3 s | accountTicket | 5.7 s |
+| auditLog | 20.2 s | permissions | 3.1 s |
+| login | 18.8 s | migrations | 3.0 s |
+| system | 2.5 s | tickets | 2.0 s |
+
+  The slowest suites are the ones that start CLI processes (auditTools, lockout, admin2fa) or do many bcrypt hashes. The slowest unit suites are authRoutes (6.3 s) and errors (6.0 s).
+
+### Tests added in Phase 3
+- **`permissions.test.js`:** seed mapping; every role/service answer; no DB query per check; middleware 200/403/401; a change announced by one process reloads the map in another.
+- **`auditLog.test.js`:**
+  - every Phase 1/2 flow recorded with IP and user agent;
+  - **no secret, code, token or email address in any row**;
+  - lockout event;
+  - **50 concurrent logins give a gap-free, intact chain**;
+  - append-only (UPDATE / DELETE / TRUNCATE rejected);
+  - duplicate `event_id` skipped;
+  - fail open and fail closed against a real database error.
+- **`auditTools.test.js`** (through the real CLI):
+  - 3,000-row chain verifies in pages;
+  - **edited row, deleted middle row, swapped rows and deleted newest rows are each detected with the exact message shown below**;
+  - wrong key detected;
+  - search filters;
+  - CSV export with a formula-injection user agent;
+  - export refused when it cannot be recorded;
+  - `policy set` (needs `--confirm`, writes history and audit, applies without restart);
+  - `require_2fa_admin` and out-of-range values refused;
+  - policy change refused when the audit write fails;
+  - `role set` (history, audit, tickets revoked);
+  - `perm grant/revoke` (history, audit, live reload);
+  - chain still verifies after the admin actions.
+- **Unit:** CSV cell escaping, policy-change parsing, the export's filter summary never containing the searched user.
+
+**What failed along the way (all fixed, then the full run above passed):**
+- A first integration run with my new tests: 21 of 156 failed.
+  - **Test-side mistakes:** hand-built test configs missing the new required `AUDIT_HMAC_KEY`; a TOTP fail-closed test that locked the account in the wrong order; the long all-flows test hitting Jest's 60 s per-test limit on the loaded machine.
+  - The queue-mode tests, before that work was moved to its branch.
+- **A timing weakness the Part 1 hardening had missed:** a resend-cooldown test assumed a request would arrive within 1 second. It now uses the normal 60 s cooldown and ends it by deleting the Redis key.
+- **One real bug, found by the 3.4 tests:** the shared audit search filter was an `async` function returning a knex query builder. A knex builder is "thenable", so awaiting it ran the query instead of returning the builder, and `search`/`export` failed. Fixed by separating the async user lookup from the synchronous filter.
+- The Mailpit reachability check in test setup gave up after 3 s on the loaded machine. It now fails at once if Mailpit is not running, and retries only when it is just slow.
+
+### New `.env` line (required from Phase 3)
+```
+AUDIT_HMAC_KEY=<32 random bytes, base64url>
+```
+- Generate it with `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`.
+- It must differ from `CSRF_SECRET`, `TOKEN_HMAC_KEY` and `TOTP_ENC_KEY`. The app, the admin CLI and the audit CLI all refuse to start without it.
+- **Keep it safe:** losing or changing it makes existing chains unverifiable.
+
+### How to demonstrate tampering by hand
+1. Add `AUDIT_HMAC_KEY` to `.env` (above), then rebuild so the three new migrations run:
+   ```bash
+   docker compose up --build -d
+   ```
+2. Create a few events: open http://localhost:3000/login, enter a wrong password once, then sign in correctly. Then check the chain:
+   ```bash
+   docker compose exec app npm run audit -- search --limit 10
+   docker compose exec app npm run audit -- verify
+   ```
+   Expected: `Checked N rows in … ms (anchor: seq N).` and `OK: the chain is intact up to seq N.`
+3. Open psql on the development database:
+   ```bash
+   docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+   ```
+4. Try an ordinary edit first; the database refuses it:
+   ```sql
+   UPDATE auth_logs SET success = true WHERE seq = 2;
+   -- ERROR:  auth_logs is append-only (UPDATE rejected)
+   ```
+5. Now tamper the way only the table owner can, by switching the trigger off:
+   ```sql
+   BEGIN;
+   ALTER TABLE auth_logs DISABLE TRIGGER auth_logs_no_update_delete;
+   UPDATE auth_logs SET details = '{"method": "hacked"}' WHERE seq = 2;
+   ALTER TABLE auth_logs ENABLE TRIGGER auth_logs_no_update_delete;
+   COMMIT;
+   \q
+   ```
+6. Verify again:
+   ```bash
+   docker compose exec app npm run audit -- verify
+   ```
+   It prints `BROKEN at seq 2: row_hash (row content does not match its hash).` and exits with code 1.
+
+Other cases (the exact messages are checked by `auditTools.test.js`):
+
+| Tampering (inside the same `BEGIN; ALTER ... DISABLE TRIGGER ...; ...; ALTER ... ENABLE TRIGGER ...; COMMIT;` wrapper) | What `verify` prints |
+|---|---|
+| `DELETE FROM auth_logs WHERE seq = 3;` | `BROKEN at seq 3: gap (seq 3 is missing (next is 4)).` |
+| Swap two rows: `UPDATE auth_logs SET seq = 999999 WHERE seq = 2; UPDATE auth_logs SET seq = 2 WHERE seq = 3; UPDATE auth_logs SET seq = 3 WHERE seq = 999999;` | `BROKEN at seq 2: prev_hash (row does not link to the previous row).` |
+| Delete the newest rows: `DELETE FROM auth_logs WHERE seq > (SELECT max(seq) - 2 FROM auth_logs);` | `BROKEN at seq …: tail (anchor says seq N exists; database ends at N-2).` |
+| Run verify with a different `AUDIT_HMAC_KEY` | `BROKEN at seq 1: row_hash …` |
+
+**A tampered development chain stays broken** (the log is append-only by design). To start the development audit log again (as the table owner):
+```sql
+BEGIN; ALTER TABLE auth_logs DISABLE TRIGGER auth_logs_no_truncate; TRUNCATE auth_logs; ALTER TABLE auth_logs ENABLE TRIGGER auth_logs_no_truncate; COMMIT;
+```
+then `docker compose exec redis redis-cli DEL cg:audit:head` to clear the anchor.
+
+### Evidence to capture for the report
+- `npm run audit -- verify` showing OK, then the BROKEN message after step 5.
+- The psql error `auth_logs is append-only (UPDATE rejected)`.
+- `npm run audit -- search --limit 10` output (event types, IP, user agent).
+- An exported CSV opened in a spreadsheet, showing a `'=...` cell displayed as text.
+- `npm run admin -- policy set max_attempts=3 --confirm`, then `npm run admin -- history`, then `npm run audit -- search --type policy_changed`.
+- `npm run admin -- perm list`.
+- `npm test` summary (unit 131, integration 160) and the per-suite time table above.

@@ -17,11 +17,13 @@
       </ul>
       <p class="field-error" data-error-for="password"></p>
 
-      <!-- TODO(Phase 9): check final wording against the Nigeria Data Protection Act 2023 (NFR-5). -->
+      <!-- TODO(Phase 9): check final wording against the Nigeria Data Protection Act 2023 (NFR-5),
+           including the IP-address sentence added in Phase 3 (full IPs are stored in the audit log). -->
       <div class="notice">
         <strong>Privacy notice.</strong> We store your matric number, email address, and a one-way hash of
         your password (never the password itself) to give you access to university services. We also record
-        sign-in events (time, IP address, device type) to keep accounts secure.
+        sign-in events (time, IP address, device type) to keep accounts secure. These records, including your
+        full IP address, are kept in a tamper-evident security log.
       </div>
       <label class="check">
         <input type="checkbox" name="consent" value="true" required>
