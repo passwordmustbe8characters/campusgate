@@ -25,6 +25,9 @@ const { emailPagesRouter } = require('./routes/emailPages');
 const { createRiskService } = require('./services/risk');
 const { createEmailVerification } = require('./services/emailVerification');
 const { createDeviceAlert } = require('./services/deviceAlert');
+const { createAccessWindows } = require('./policies/accessWindows');
+const { createVouchers } = require('./services/vouchers');
+const { voucherRouter } = require('./routes/vouchers');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
@@ -90,6 +93,8 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     }),
     emailVerification: createEmailVerification({ db, redis, delivery, config, metrics, logger, audit }),
     deviceAlert: createDeviceAlert({ db, delivery, metrics, logger, audit }),
+    accessWindows: createAccessWindows({ db, redis, logger, now: clock ? () => new Date(clock.now()) : undefined }),
+    vouchers: createVouchers({ db, config, audit, sessions }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
       db, redis, hasher, delivery, config, tickets: [preauthTickets], sessions, metrics, logger, audit,
@@ -127,7 +132,8 @@ function createApp({
   });
 
   const policyNow = () => getPolicy(db);
-  const controller = createAuthController({ ...services, cookies, getPolicy: policyNow });
+  const profileOf = (userId) => db('users').where({ id: userId }).first('level', 'faculty');
+  const controller = createAuthController({ ...services, cookies, getPolicy: policyNow, profileOf });
   const admission = requireAdmission({ waitingRoom: services.waitingRoom, getPolicy: policyNow, cookies, db });
   const settings = createSettingsController({ ...services, cookies });
   const passwords = createPasswordController({ passwordService: services.passwordService, cookies });
@@ -171,6 +177,10 @@ function createApp({
   app.use(adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permissions: services.permissions, services }));
   app.use(portalRouter({
     db, csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService, otp: services.otp, audit: services.audit,
+    accessWindows: services.accessWindows,
+  }));
+  app.use(voucherRouter({
+    csrf, rateLimiter, vouchers: services.vouchers, sessions: services.sessions, cookies, getPolicy: policyNow, audit: services.audit,
   }));
 
   app.use(notFound);

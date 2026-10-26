@@ -95,7 +95,8 @@ describe('home page and mock portal: one sign-in opens every page (FR-P1, FR-M1,
 
   test('an allowed page reads ONLY demonstration content tables, never users-for-auth, sessions or permissions', async () => {
     const { agent, app } = await signedIn();
-    await app.get('services').permissions.load();
+    await app.get('services').permissions.load(); // in memory, as after start-up
+    await app.get('services').accessWindows.load(); // likewise (Phase 7)
     const { res, seen } = await queriesDuring(() => agent.get('/portal/hostel'));
     expect(res.status).toBe(200);
     expect(seen).toHaveLength(1);

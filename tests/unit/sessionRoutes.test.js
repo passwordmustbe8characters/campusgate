@@ -33,6 +33,7 @@ describe('session checks are on exactly the right routes', () => {
     const ADMIN_CHANGES = [
       'GET /admin/logs/export', 'POST /admin/logs/verify', 'POST /admin/policies', 'POST /admin/users/reset-2fa',
       'POST /admin/users/role', 'POST /admin/users/status', 'POST /admin/users/unlock',
+      'POST /admin/vouchers', 'POST /admin/vouchers/revoke', 'POST /admin/windows', 'POST /admin/windows/delete',
     ];
     expect(routesWhere(app, (fn) => fn.requiresRecentSignIn === true)).toEqual([...SECURITY_CHANGE_ROUTES, ...ADMIN_CHANGES].sort());
     const withSession = routesWhere(app, (fn) => fn.requiresSession === true);
@@ -44,6 +45,7 @@ describe('session checks are on exactly the right routes', () => {
     for (const route of [
       'POST /auth/login', 'POST /auth/register', 'POST /auth/otp', 'POST /auth/otp/resend', 'POST /auth/totp/verify',
       'POST /auth/password/forgot', 'POST /auth/password/reset', 'GET /login', 'GET /register',
+      'POST /auth/voucher', 'GET /voucher', 'POST /auth/verify-email', 'GET /verify-email',
     ]) {
       expect(withSession).not.toContain(route);
     }

@@ -57,7 +57,7 @@ async function revokeUserSessions({ db, redis }, userId, reason) {
  */
 function createSessionService({ db, redis, jwtSecret }) {
   /** Issue a token; `ttlMin` comes from policies.session_timeout_min. */
-  async function issue({ userId, role, scope = 'full', ttlMin, ip, userAgent }) {
+  async function issue({ userId, role, scope = 'full', ttlMin, ip, userAgent, level = null, faculty = null, services = null }) {
     if (!SCOPES.includes(scope)) throw new Error(`unknown session scope ${scope}`);
     const jti = randomUUID();
     const issuedAt = Math.floor(Date.now() / 1000);
@@ -71,8 +71,14 @@ function createSessionService({ db, redis, jwtSecret }) {
       created_at: new Date(issuedAt * 1000),
       expires_at: expiresAt,
     });
+    // lvl/fac: for access windows (FR-Z2); svc: a guest voucher's services (FR-Z4).
+    // All checked without a database read.
+    const extra = {};
+    if (level !== null && level !== undefined) extra.lvl = Number(level);
+    if (faculty) extra.fac = String(faculty);
+    if (Array.isArray(services)) extra.svc = services.map(String);
     const token = jwt.sign(
-      { sub: String(userId), role, scope, iat: issuedAt },
+      { sub: String(userId), role, scope, iat: issuedAt, ...extra },
       jwtSecret,
       { algorithm: 'HS256', expiresIn: ttlMin * 60, jwtid: jti, issuer: ISSUER, audience: AUDIENCE },
     );
@@ -95,7 +101,17 @@ function createSessionService({ db, redis, jwtSecret }) {
     const userId = Number(claims.sub);
     if (!Number.isSafeInteger(userId) || userId <= 0) return null;
     if (typeof claims.role !== 'string' || !SCOPES.includes(claims.scope) || typeof claims.jti !== 'string') return null;
-    return { userId, role: claims.role, scope: claims.scope, jti: claims.jti, issuedAt: claims.iat, expiresAt: claims.exp };
+    return {
+      userId,
+      role: claims.role,
+      scope: claims.scope,
+      jti: claims.jti,
+      issuedAt: claims.iat,
+      expiresAt: claims.exp,
+      level: Number.isInteger(claims.lvl) ? claims.lvl : null,
+      faculty: typeof claims.fac === 'string' ? claims.fac : null,
+      services: Array.isArray(claims.svc) ? claims.svc.filter((s) => typeof s === 'string') : null,
+    };
   }
 
   /** One Redis lookup. Throws if Redis is unreachable (callers fail closed). */

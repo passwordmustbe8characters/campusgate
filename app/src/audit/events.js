@@ -23,6 +23,7 @@ const EVENT_TYPES = Object.freeze({
   lockout: { details: ['failedAttempts', 'lockedUntil', 'stage'] },
   second_factor_required: { details: ['method', 'reason', 'riskScore', 'signals'] },
   email_verified: { details: [] },
+  voucher_redeemed: { details: ['services'] },
   new_device_alert: { details: [] },
   admin_enrolment_required: { details: [] },
   // One-time codes (fail open)
@@ -48,6 +49,9 @@ const EVENT_TYPES = Object.freeze({
   admin_unlock: { details: ['actor'], critical: true },
   admin_reset_2fa: { details: ['actor', 'backupCodesRemoved'], critical: true },
   admin_user_status: { details: ['actor', 'active'], critical: true },
+  window_changed: { details: ['actor', 'action', 'service'], critical: true },
+  voucher_created: { details: ['actor', 'services', 'hours'], critical: true },
+  voucher_revoked: { details: ['actor'], critical: true },
   policy_changed: { details: ['actor', 'fields'], critical: true },
   role_changed: { details: ['actor', 'from', 'to'], critical: true },
   permission_changed: { details: ['actor', 'action', 'role', 'service'], critical: true },

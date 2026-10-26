@@ -83,7 +83,9 @@ function requirePermission(permissions, service) {
     }
     const role = req.account && req.account.role;
     if (!role) return res.status(401).json({ error: 'Please sign in again.', restart: true });
-    if (!(await permissions.can(role, service))) {
+    // FR-Z4: a guest's session carries the services its voucher grants (signed, so it cannot be altered).
+    const viaVoucher = role === 'guest' && Array.isArray(req.account.services) && req.account.services.includes(service);
+    if (!viaVoucher && !(await permissions.can(role, service))) {
       req.log.info({ event: 'permission_denied', userId: req.account.userId, role, service }, 'permission denied');
       return res.status(403).json({ error: 'You do not have access to this service.' });
     }

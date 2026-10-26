@@ -24,7 +24,7 @@ const ENROLMENT_SESSION_MAX_MIN = 10;
  * a `sessions` record. Lifetime = policies.session_timeout_min, read now, so a
  * policy change applies to the next sign-in without a restart.
  */
-async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom, deviceAlert, audit }) {
+async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom, deviceAlert, audit, profileOf }) {
   const policy = await getPolicy();
   const ttlMin = scope === 'enrol'
     ? Math.min(policy.session_timeout_min, ENROLMENT_SESSION_MAX_MIN)
@@ -38,8 +38,10 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
   if (ended > 0) {
     await audit.record('sessions_revoked', { userId: user.id, success: true, details: { reason: 'session_limit', count: ended } }, auditContext(req));
   }
+  const profile = profileOf ? (await profileOf(user.id)) || {} : {};
   const session = await sessions.issue({
     userId: user.id, role: user.role, scope, ttlMin, ip: req.ip, userAgent: req.get('user-agent'),
+    level: profile.level, faculty: profile.faculty,
   });
   cookies.clearPreauth(res);
   cookies.setSession(res, session);
@@ -52,9 +54,9 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
 }
 
 function createAuthController({
-  authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom, recordLoginTime, emailVerification, deviceAlert,
+  authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom, recordLoginTime, emailVerification, deviceAlert, profileOf,
 }) {
-  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom, deviceAlert, audit };
+  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom, deviceAlert, audit, profileOf };
 
   async function signIn(req, res, user) {
     await startSession(req, res, user, 'full', sessionDeps);

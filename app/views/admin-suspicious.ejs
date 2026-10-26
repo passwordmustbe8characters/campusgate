@@ -1,0 +1,30 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Suspicious activity</h1>
+    <p class="hint">From the audit log. Last 60 minutes unless stated. Reload to refresh.</p>
+
+    <h2>Accounts with repeated failed sign-ins (3+)</h2>
+    <% if (accounts.length === 0) { %><p>None.</p><% } else { %>
+      <table><thead><tr><th>Account</th><th>Failures</th><th>Different IPs</th><th>Last (UTC)</th></tr></thead><tbody>
+        <% accounts.forEach(function (a) { %><tr><td><%= a.account || ('unknown ID #' + String(a.subject_hash || '').slice(0, 8)) %></td>
+          <td><%= a.failures %></td><td><%= a.ips %></td><td><%= a.last.toISOString().slice(11, 19) %></td></tr><% }) %>
+      </tbody></table>
+    <% } %>
+
+    <h2>Addresses with bursts of failures (5+)</h2>
+    <p class="hint">Many accounts from one address suggests password spraying; one address may also be a shared campus network.</p>
+    <% if (ips.length === 0) { %><p>None.</p><% } else { %>
+      <table><thead><tr><th>IP</th><th>Failures</th><th>Accounts tried</th><th>Last (UTC)</th></tr></thead><tbody>
+        <% ips.forEach(function (i) { %><tr><td><%= i.ip || '–' %></td><td><%= i.failures %></td><td><%= i.accounts %></td>
+          <td><%= i.last.toISOString().slice(11, 19) %></td></tr><% }) %>
+      </tbody></table>
+    <% } %>
+
+    <h2>Lockouts (last 24 hours)</h2>
+    <% if (lockouts.length === 0) { %><p>None.</p><% } else { %>
+      <ul><% lockouts.forEach(function (l) { %><li><%= l.account %> from <%= l.ip || '–' %> at <%= l.occurred_at.toISOString().slice(0, 19).replace('T', ' ') %> UTC</li><% }) %></ul>
+    <% } %>
+
+    <h2>Risk checks (last 24 hours)</h2>
+    <p>Sign-ins refused by the risk score: <strong><%= risk.blocked %></strong>. Sign-ins asked for an extra emailed code: <strong><%= risk.stepped_up %></strong>.</p>
+<%- include('partials/bottom') %>

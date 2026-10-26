@@ -38,8 +38,9 @@ async function main() {
   }
 
   const app = createApp({ config, logger, db, redis, hasher, delivery });
-  const { permissions, waitingRoom } = app.get('services');
+  const { permissions, waitingRoom, accessWindows } = app.get('services');
   await permissions.start(); // load role -> service map, subscribe to change notices
+  await accessWindows.start(); // same for access windows
   // Waiting-room admitter: every process runs it; exactly one admits per interval (Redis slot).
   const stopAdmitter = waitingRoom.startAdmitter({ getPolicy: () => getPolicy(db), logger });
 
@@ -67,6 +68,7 @@ async function main() {
       await app.get('background').idle(); // let queued reset/notification emails finish
       stopAdmitter();
       await permissions.stop();
+      await accessWindows.stop();
       await Promise.allSettled([db.destroy(), redis.quit(), delivery.close && delivery.close()]);
       clearTimeout(forceExit);
       process.exit(0);

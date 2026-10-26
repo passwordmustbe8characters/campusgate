@@ -1,0 +1,34 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Guest vouchers</h1>
+    <p class="hint">A one-time code for a visitor (external examiner, contractor, conference guest). The guest enters it at
+      <code>/voucher</code> and gets only the chosen services until the code expires. The code is shown once and stored only as a hash.</p>
+
+    <h2>Create a voucher</h2>
+    <form data-api="/admin/vouchers" novalidate>
+      <fieldset><legend>Services</legend>
+        <% services.forEach(function (s) { %><label class="check"><input type="checkbox" name="svc_<%= s %>"> <%= s.replace('_', ' ') %></label><% }) %>
+      </fieldset>
+      <label>Valid for (hours) <input name="hours" inputmode="numeric" value="24" required></label>
+      <label>Note (e.g. who it is for) <input name="label" maxlength="80"></label>
+      <button type="submit">Create voucher</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+
+    <h2>Recent vouchers</h2>
+    <% if (rows.length === 0) { %><p>None yet.</p><% } else { %>
+      <table>
+        <thead><tr><th>Guest</th><th>Services</th><th>Note</th><th>Expires (UTC)</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+          <% rows.forEach(function (v) {
+               var status = v.revoked_at ? 'cancelled' : v.used_at ? 'used' : (v.expires_at < new Date() ? 'expired' : 'unused'); %>
+            <tr><td><%= v.guest %></td><td><%= v.services.join(', ') %></td><td><%= v.label || '' %></td>
+              <td><%= v.expires_at.toISOString().slice(0, 16).replace('T', ' ') %></td><td><%= status %></td>
+              <td><% if (!v.revoked_at && v.expires_at > new Date()) { %>
+                <form data-api="/admin/vouchers/revoke" data-reload novalidate><input type="hidden" name="id" value="<%= v.id %>">
+                  <button type="submit">Cancel</button><span class="msg" data-message></span></form><% } %></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+<%- include('partials/bottom') %>

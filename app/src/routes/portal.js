@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { requirePermission } = require('../policies/permissions');
+const { requireWindow } = require('../policies/accessWindows');
 const { auditContext } = require('../audit/audit');
 const { loadAccount } = require('../services/accountState');
 
@@ -12,23 +13,26 @@ const { loadAccount } = require('../services/accountState');
  * (in-memory map), with NO database read for authentication. The database is
  * read only for the demonstration content of each page.
  */
-function portalRouter({ db, csrf, requireSignedIn, permissions, portalService, otp, audit }) {
+function portalRouter({ db, csrf, requireSignedIn, permissions, portalService, otp, audit, accessWindows }) {
   const router = express.Router();
+  // Session, then role permission (or voucher), then today's access window (FR-Z2): no DB read.
+  const gate = (service) => [requireSignedIn, requirePermission(permissions, service), requireWindow(accessWindows, service)];
   const page = (name, title, req, res, data) =>
     res.render(name, { title, csrfToken: csrf.generateCsrfToken(req, res), account: req.account, ...data });
 
   router.get('/home', csrf.ensurePreSession, requireSignedIn, async (req, res) => {
     const can = {};
     for (const service of ['fees', 'hostel', 'course_registration', 'admin_console']) {
-      can[service] = await permissions.can(req.account.role, service);
+      const viaVoucher = req.account.role === 'guest' && (req.account.services || []).includes(service);
+      can[service] = viaVoucher || (await permissions.can(req.account.role, service));
     }
     page('home', 'Home', req, res, { can, expiresAt: new Date(req.account.expiresAt * 1000) });
   });
 
-  router.get('/portal/fees', csrf.ensurePreSession, requireSignedIn, requirePermission(permissions, 'fees'),
+  router.get('/portal/fees', csrf.ensurePreSession, ...gate('fees'),
     async (req, res) => page('portal-fees', 'Fees', req, res, await portalService.fees(req.account.userId)));
 
-  router.post('/portal/fees/invoice', requireSignedIn, requirePermission(permissions, 'fees'), async (req, res) => {
+  router.post('/portal/fees/invoice', ...gate('fees'), async (req, res) => {
     const { reference, total } = await portalService.generateInvoice(req.account.userId);
     req.log.info({ event: 'demo_invoice_generated', userId: req.account.userId }, 'demo invoice generated');
     res.status(201).json({
@@ -41,7 +45,7 @@ function portalRouter({ db, csrf, requireSignedIn, permissions, portalService, o
   // FR-M3: step-up before the (mock) payment. A signed-in student must prove,
   // again and right now, that they hold their email account: a fresh 6-digit
   // code (5 min, 3 attempts, single use). DEMONSTRATION ONLY: nothing is paid.
-  router.post('/portal/fees/pay/start', requireSignedIn, requirePermission(permissions, 'fees'), async (req, res) => {
+  router.post('/portal/fees/pay/start', ...gate('fees'), async (req, res) => {
     const invoice = await portalService.unpaidInvoice(req.account.userId, req.body.reference);
     if (!invoice) return res.status(404).json({ error: 'No unpaid invoice with that reference.' });
     const account = await loadAccount(db, req.account.userId);
@@ -54,7 +58,7 @@ function portalRouter({ db, csrf, requireSignedIn, permissions, portalService, o
     return res.json({ message: `We sent a 6-digit code to your email. Enter it to confirm the payment for ${invoice.reference}.` });
   });
 
-  router.post('/portal/fees/pay/confirm', requireSignedIn, requirePermission(permissions, 'fees'), async (req, res) => {
+  router.post('/portal/fees/pay/confirm', ...gate('fees'), async (req, res) => {
     const { reference, code } = req.body;
     if (typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) return res.status(400).json({ error: 'Enter the 6-digit code.' });
     if (!(await portalService.unpaidInvoice(req.account.userId, reference))) {
@@ -71,10 +75,10 @@ function portalRouter({ db, csrf, requireSignedIn, permissions, portalService, o
     return res.json({ message: `Payment for ${reference} confirmed (demonstration only: no money was moved).` });
   });
 
-  router.get('/portal/hostel', csrf.ensurePreSession, requireSignedIn, requirePermission(permissions, 'hostel'),
+  router.get('/portal/hostel', csrf.ensurePreSession, ...gate('hostel'),
     async (req, res) => page('portal-hostel', 'Hostel', req, res, { halls: await portalService.hostels() }));
 
-  router.get('/portal/registration', csrf.ensurePreSession, requireSignedIn, requirePermission(permissions, 'course_registration'),
+  router.get('/portal/registration', csrf.ensurePreSession, ...gate('course_registration'),
     async (req, res) => page('portal-registration', 'Course registration', req, res, await portalService.courses(req.account.userId)));
 
   return router;

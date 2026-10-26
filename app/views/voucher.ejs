@@ -1,0 +1,11 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Guest access</h1>
+    <p>Visitors: enter the code you were given by the university. Each code works once and only for a limited time.</p>
+    <form data-api="/auth/voucher" novalidate>
+      <label for="code">Guest code</label>
+      <input id="code" name="code" autocomplete="off" autocapitalize="characters" maxlength="12" placeholder="XXXX-XXXX" required>
+      <button type="submit">Continue</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <p class="alt">Student or staff? <a href="/login">Sign in</a></p>
+<%- include('partials/bottom') %>

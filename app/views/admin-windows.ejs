@@ -1,0 +1,33 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Access windows</h1>
+    <p class="hint">Spread rush-hour load: while a service has windows on a day, each group may use it only in its own window
+      (Lagos time); after the day's last window closes, it is open to everyone. A service with no windows is always open.
+      Sign-in itself is never blocked.</p>
+
+    <% if (rows.length === 0) { %><p>No windows set: every service is open to everyone.</p><% } else { %>
+      <table>
+        <thead><tr><th>Service</th><th>Level</th><th>Faculty</th><th>Day</th><th>From</th><th>To</th><th></th></tr></thead>
+        <tbody>
+          <% rows.forEach(function (w) { %>
+            <tr><td><%= w.service %></td><td><%= w.level || 'all' %></td><td><%= w.faculty || 'all' %></td>
+              <td><%= w.on_date || 'every day' %></td><td><%= w.start_time %></td><td><%= w.end_time %></td>
+              <td><form data-api="/admin/windows/delete" data-reload novalidate><input type="hidden" name="id" value="<%= w.id %>">
+                <button type="submit">Remove</button><span class="msg" data-message></span></form></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+
+    <h2>Add a window</h2>
+    <form data-api="/admin/windows" data-reload novalidate>
+      <label>Service <select name="service"><% services.forEach(function (s) { %><option><%= s %></option><% }) %></select></label>
+      <label>Level <select name="level"><option value="">all</option><% [100,200,300,400,500,600].forEach(function (l) { %><option><%= l %></option><% }) %></select></label>
+      <label>Faculty <select name="faculty"><option value="">all</option><% faculties.forEach(function (f) { %><option><%= f %></option><% }) %></select></label>
+      <label>Day (leave empty for every day) <input name="on_date" type="date"></label>
+      <label>From <input name="start_time" type="time" required></label>
+      <label>To <input name="end_time" type="time" required></label>
+      <button type="submit">Add window</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+<%- include('partials/bottom') %>

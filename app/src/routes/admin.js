@@ -12,8 +12,10 @@ const { getPolicy } = require('../policies/policyRepo');
 const { normalizeId, normalizeEmail, looksLikeEmail } = require('../services/identity');
 const { unlockUser, resetTwoFactor, setUserActive, searchUsers, listLockedUsers } = require('../services/userService');
 const { setPolicy, setRole, policyHistory, AdminChangeError, POLICY_FIELDS } = require('../services/adminChangeService');
+const { VoucherError, VOUCHER_SERVICES } = require('../services/vouchers');
 
 const ROLES = ['student', 'staff', 'guest', 'admin'];
+const WINDOW_SERVICES = ['fees', 'hostel', 'course_registration'];
 const DASHBOARD_EVERY_MS = 2000;
 
 /** Log filters from a query string, validated (bad values are ignored, never passed to SQL as text). */
@@ -35,7 +37,7 @@ function logFilters(q) {
  */
 function adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permissions, services }) {
   const router = express.Router();
-  const { audit, sessions, preauthTickets, waitingRoom, dashboard } = services;
+  const { audit, sessions, preauthTickets, dashboard, accessWindows, vouchers } = services;
   const admin = [requireSignedIn, requireAdmin2FA({ db }), requirePermission(permissions, 'admin_console')];
   const change = [...admin, recent];
   const ctxOf = (req) => ({ ...auditContext(req), actor: `admin:${req.account.userId}` });
@@ -161,6 +163,112 @@ function adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permiss
     }
     const summary = result.changed.map((k) => `${k} ${result.before[k]} -> ${result.after[k]}`).join(', ');
     return res.json({ message: `Policy changed: ${summary}. It applies to the next request (no restart).` });
+  });
+
+  // ---- Access windows (FR-Z2, FR-D4) ----
+  router.get('/admin/windows', csrf.ensurePreSession, ...admin, async (req, res) => {
+    const rows = await db('access_windows').join('services', 'services.id', 'access_windows.service_id')
+      .orderBy(['services.key', 'on_date', 'start_time'])
+      .select('access_windows.id', 'services.key as service', 'level', 'faculty',
+        db.raw("to_char(on_date, 'YYYY-MM-DD') AS on_date"), db.raw("to_char(start_time, 'HH24:MI') AS start_time"),
+        db.raw("to_char(end_time, 'HH24:MI') AS end_time"));
+    const faculties = (await db('student_records').distinct('faculty').orderBy('faculty')).map((r) => r.faculty);
+    page('admin-windows', 'Access windows', req, res, { rows, faculties, services: WINDOW_SERVICES });
+  });
+
+  router.post('/admin/windows', ...change, async (req, res) => {
+    const b = req.body;
+    const time = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (!WINDOW_SERVICES.includes(b.service)) return res.status(400).json({ error: 'Choose a service.' });
+    if (!time.test(b.start_time || '') || !time.test(b.end_time || '') || b.end_time <= b.start_time) {
+      return res.status(400).json({ error: 'Give a start and end time (HH:MM), with the end after the start.' });
+    }
+    const level = b.level ? Number(b.level) : null;
+    if (level !== null && ![100, 200, 300, 400, 500, 600].includes(level)) return res.status(400).json({ error: 'Choose a valid level.' });
+    const onDate = b.on_date && /^\d{4}-\d{2}-\d{2}$/.test(b.on_date) ? b.on_date : null;
+    const faculty = typeof b.faculty === 'string' && b.faculty.trim() ? b.faculty.trim().slice(0, 80) : null;
+    const ctx = ctxOf(req);
+    await db.transaction(async (trx) => {
+      const service = await trx('services').where({ key: b.service }).first('id');
+      await trx('access_windows').insert({
+        service_id: service.id, level, faculty, on_date: onDate, start_time: b.start_time, end_time: b.end_time, created_by: req.account.userId,
+      });
+      await audit.recordCritical(trx, 'window_changed', { success: true, details: { actor: ctx.actor, action: 'add', service: b.service } }, ctx);
+    });
+    await accessWindows.announceChange();
+    return res.status(201).json({ message: `Window added: ${b.service}, ${level ? `${level} level` : 'all levels'}${faculty ? `, ${faculty}` : ''}, ${b.start_time}-${b.end_time}${onDate ? ` on ${onDate}` : ' every day'}.` });
+  });
+
+  router.post('/admin/windows/delete', ...change, async (req, res) => {
+    const id = Number(req.body.id);
+    if (!Number.isSafeInteger(id)) return res.status(400).json({ error: 'Unknown window.' });
+    const ctx = ctxOf(req);
+    const removed = await db.transaction(async (trx) => {
+      const row = await trx('access_windows').join('services', 'services.id', 'access_windows.service_id')
+        .where('access_windows.id', id).first('services.key as service');
+      if (!row) return null;
+      await trx('access_windows').where({ id }).del();
+      await audit.recordCritical(trx, 'window_changed', { success: true, details: { actor: ctx.actor, action: 'remove', service: row.service } }, ctx);
+      return row;
+    });
+    if (!removed) return res.status(404).json({ error: 'Unknown window.' });
+    await accessWindows.announceChange();
+    return res.json({ message: 'Window removed.' });
+  });
+
+  // ---- Guest vouchers (FR-Z4, FR-D4) ----
+  router.get('/admin/vouchers', csrf.ensurePreSession, ...admin, async (req, res) => {
+    page('admin-vouchers', 'Guest vouchers', req, res, { rows: await vouchers.list(), services: VOUCHER_SERVICES });
+  });
+
+  router.post('/admin/vouchers', ...change, async (req, res) => {
+    const services = VOUCHER_SERVICES.filter((s) => req.body[`svc_${s}`] === true || req.body[`svc_${s}`] === 'true');
+    try {
+      const v = await vouchers.create({ services, hours: req.body.hours, label: req.body.label }, { ...ctxOf(req), adminId: req.account.userId });
+      res.set('Cache-Control', 'no-store');
+      return res.status(201).json({
+        message: `Voucher code: ${v.code} (give it to the guest now; it will not be shown again). Valid until ${v.expiresAt.toISOString().slice(0, 16).replace('T', ' ')} UTC, once, for: ${v.services.join(', ')}.`,
+        code: v.code,
+      });
+    } catch (err) {
+      if (err instanceof VoucherError) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+  });
+
+  router.post('/admin/vouchers/revoke', ...change, async (req, res) => {
+    const ok = await vouchers.revoke(Number(req.body.id), ctxOf(req));
+    return ok ? res.json({ message: 'Voucher cancelled; any guest session from it has ended.' }) : res.status(404).json({ error: 'No such active voucher.' });
+  });
+
+  // ---- Suspicious activity (FR-D5), from the audit log ----
+  router.get('/admin/suspicious', csrf.ensurePreSession, ...admin, async (req, res) => {
+    const lastHour = db.raw("now() - interval '60 minutes'");
+    const [accounts, ips, lockouts, risk] = await Promise.all([
+      // Repeated failures on one account (known accounts by ID; unknown ones by the keyed hash of what was typed).
+      db('auth_logs').leftJoin('users', 'users.id', 'auth_logs.user_id')
+        .where('event_type', 'login_failure').where('occurred_at', '>', lastHour)
+        .groupBy('users.matric_or_staff_id', 'auth_logs.subject_hash')
+        .havingRaw('count(*) >= 3')
+        .select('users.matric_or_staff_id as account', 'auth_logs.subject_hash',
+          db.raw('count(*)::int AS failures'), db.raw('count(DISTINCT ip)::int AS ips'), db.raw('max(occurred_at) AS last'))
+        .orderBy('failures', 'desc').limit(50),
+      // Bursts from one address, and how many different accounts it tried (password spraying).
+      db('auth_logs').where('event_type', 'login_failure').where('occurred_at', '>', lastHour)
+        .groupBy('ip').havingRaw('count(*) >= 5')
+        .select('ip', db.raw('count(*)::int AS failures'),
+          db.raw('count(DISTINCT coalesce(user_id::text, subject_hash))::int AS accounts'), db.raw('max(occurred_at) AS last'))
+        .orderBy('failures', 'desc').limit(50),
+      db('auth_logs').leftJoin('users', 'users.id', 'auth_logs.user_id').where('event_type', 'lockout')
+        .where('occurred_at', '>', db.raw("now() - interval '24 hours'"))
+        .orderBy('seq', 'desc').limit(20).select('users.matric_or_staff_id as account', 'auth_logs.ip', 'auth_logs.occurred_at'),
+      db('auth_logs').where('occurred_at', '>', db.raw("now() - interval '24 hours'"))
+        .where((w) => w.whereRaw("event_type = 'login_failure' AND details->>'reason' = 'risk_blocked'")
+          .orWhereRaw("event_type = 'second_factor_required' AND details->>'reason' = 'risk'"))
+        .select(db.raw("count(*) FILTER (WHERE event_type = 'login_failure')::int AS blocked"),
+          db.raw("count(*) FILTER (WHERE event_type = 'second_factor_required')::int AS stepped_up")).first(),
+    ]);
+    page('admin-suspicious', 'Suspicious activity', req, res, { accounts, ips, lockouts, risk });
   });
 
   // ---- Audit log (FR-L3, FR-L4) ----
