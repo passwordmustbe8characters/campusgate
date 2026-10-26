@@ -170,6 +170,9 @@ function loadConfig(env = process.env) {
 
     // --- Phase 7: risk score at sign-in (FR-A11). On by default. ---
     riskScoring: bool(env, 'RISK_SCORING', true, errors),
+
+    // --- Phase 8: multi-process serving (FR-P7). 1 = a single process. ---
+    clusterWorkers: intInRange(env, 'CLUSTER_WORKERS', 1, 1, 64, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {

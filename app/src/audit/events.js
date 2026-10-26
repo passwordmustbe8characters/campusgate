@@ -24,6 +24,7 @@ const EVENT_TYPES = Object.freeze({
   second_factor_required: { details: ['method', 'reason', 'riskScore', 'signals'] },
   email_verified: { details: [] },
   voucher_redeemed: { details: ['services'] },
+  rush_hour_simulated: { details: ['actor', 'users', 'rampSec'] },
   new_device_alert: { details: [] },
   admin_enrolment_required: { details: [] },
   // One-time codes (fail open)

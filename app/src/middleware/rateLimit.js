@@ -30,7 +30,7 @@ function accountOf(req) {
  * and logs it: temporary lockout still stops password guessing, and a Redis
  * outage must not stop every sign-in.
  */
-function createRateLimiter({ redis, hmacKey, perIpPerMin, perAccountPerMin, windowSec = 60, metrics }) {
+function createRateLimiter({ redis, hmacKey, perIpPerMin, perAccountPerMin, windowSec = 60, metrics, simulator = null }) {
   const windowMs = windowSec * 1000;
 
   async function hit(key) {
@@ -41,11 +41,16 @@ function createRateLimiter({ redis, hmacKey, perIpPerMin, perAccountPerMin, wind
   /** Middleware for one route group ("scope"); `byAccount` adds the per-account limit. */
   function limit(scope, { byAccount = false } = {}) {
     const middleware = async (req, res, next) => {
-      const checks = [{ kind: 'ip', key: `cg:rl:${scope}:ip:${req.ip}`, max: perIpPerMin }];
+      // The admin rush-hour simulation (non-production only) sends a one-time token: all its virtual
+      // students share one IP, so its requests skip the per-IP limit. Per-account limits still apply.
+      const simHeader = req.get('x-campusgate-simulation');
+      const simulated = Boolean(simHeader && simulator && (await simulator.isRunToken(simHeader).catch(() => false)));
+      const checks = simulated ? [] : [{ kind: 'ip', key: `cg:rl:${scope}:ip:${req.ip}`, max: perIpPerMin }];
       const account = byAccount ? accountOf(req) : null;
       if (account) {
         checks.push({ kind: 'account', key: `cg:rl:${scope}:acct:${keyedHash(hmacKey, 'ratelimit', account)}`, max: perAccountPerMin });
       }
+      if (checks.length === 0) return next();
       let results;
       try {
         results = await Promise.all(checks.map((c) => hit(c.key)));

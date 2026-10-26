@@ -28,6 +28,7 @@ const { createDeviceAlert } = require('./services/deviceAlert');
 const { createAccessWindows } = require('./policies/accessWindows');
 const { createVouchers } = require('./services/vouchers');
 const { voucherRouter } = require('./routes/vouchers');
+const { createSimulator } = require('./services/simulator');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
@@ -95,6 +96,7 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     deviceAlert: createDeviceAlert({ db, delivery, metrics, logger, audit }),
     accessWindows: createAccessWindows({ db, redis, logger, now: clock ? () => new Date(clock.now()) : undefined }),
     vouchers: createVouchers({ db, config, audit, sessions }),
+    simulator: createSimulator({ redis, config, logger }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
       db, redis, hasher, delivery, config, tickets: [preauthTickets], sessions, metrics, logger, audit,
@@ -129,6 +131,7 @@ function createApp({
     perIpPerMin: config.rateLimitIpPerMin,
     perAccountPerMin: config.rateLimitAccountPerMin,
     metrics: services.metrics,
+    simulator: services.simulator,
   });
 
   const policyNow = () => getPolicy(db);

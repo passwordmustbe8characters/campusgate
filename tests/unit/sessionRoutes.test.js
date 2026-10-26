@@ -34,6 +34,7 @@ describe('session checks are on exactly the right routes', () => {
       'GET /admin/logs/export', 'POST /admin/logs/verify', 'POST /admin/policies', 'POST /admin/users/reset-2fa',
       'POST /admin/users/role', 'POST /admin/users/status', 'POST /admin/users/unlock',
       'POST /admin/vouchers', 'POST /admin/vouchers/revoke', 'POST /admin/windows', 'POST /admin/windows/delete',
+      'POST /admin/simulate',
     ];
     expect(routesWhere(app, (fn) => fn.requiresRecentSignIn === true)).toEqual([...SECURITY_CHANGE_ROUTES, ...ADMIN_CHANGES].sort());
     const withSession = routesWhere(app, (fn) => fn.requiresSession === true);

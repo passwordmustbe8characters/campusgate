@@ -1,5 +1,6 @@
 'use strict';
 
+const cluster = require('node:cluster');
 const { loadConfig, loadEnvFile } = require('./config');
 const { createLogger } = require('./logger');
 const { createDb } = require('./db/knex');
@@ -87,7 +88,37 @@ process.on('unhandledRejection', (err) => {
   process.exit(1);
 });
 
-main().catch((err) => {
-  logger.fatal({ err }, 'startup failed');
-  process.exit(1);
-});
+/**
+ * Multi-process serving (FR-P7): with CLUSTER_WORKERS > 1 the primary process
+ * forks that many workers sharing the port; each owns its own DB pool, Redis
+ * connection and bcrypt thread pool (UV_THREADPOOL_SIZE each). Everything
+ * shared (sessions denylist, rate limits, waiting room, tickets) is in Redis.
+ * A worker that dies is replaced; on SIGTERM/SIGINT the primary stops them all.
+ */
+function runPrimary(workers) {
+  let stopping = false;
+  logger.info({ workers, uvThreadpoolSize: config.uvThreadpoolSize }, 'starting worker processes');
+  for (let i = 0; i < workers; i += 1) cluster.fork();
+  cluster.on('exit', (worker, code, signal) => {
+    if (stopping) return;
+    logger.error({ pid: worker.process.pid, code, signal }, 'worker exited; starting a replacement');
+    cluster.fork();
+  });
+  const stopAll = () => {
+    stopping = true;
+    for (const w of Object.values(cluster.workers)) w.process.kill('SIGTERM');
+    setTimeout(() => process.exit(0), 12000).unref();
+    cluster.on('exit', () => { if (Object.keys(cluster.workers).length === 0) process.exit(0); });
+  };
+  process.on('SIGTERM', stopAll);
+  process.on('SIGINT', stopAll);
+}
+
+if (config.clusterWorkers > 1 && cluster.isPrimary) {
+  runPrimary(config.clusterWorkers);
+} else {
+  main().catch((err) => {
+    logger.fatal({ err }, 'startup failed');
+    process.exit(1);
+  });
+}

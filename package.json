@@ -21,8 +21,9 @@
     "admin": "node scripts/admin-cli.js",
     "audit": "node scripts/audit-cli.js",
     "bench:bcrypt": "node scripts/bcrypt-bench.js",
-    "loadtest": "node scripts/not-yet.js loadtest 8",
-    "calibrate": "node scripts/not-yet.js calibrate 8"
+    "loadtest": "node loadtest/run.js",
+    "loadtest:experiments": "node loadtest/experiments.js",
+    "calibrate": "node loadtest/calibrate.js"
   },
   "jest": {
     "projects": [

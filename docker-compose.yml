@@ -56,10 +56,11 @@ services:
       # Override the host URLs from .env with the in-network service names.
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
-      # Mail: Mailpit unless DOCKER_SMTP_HOST/PORT are set in .env (e.g. smtp.gmail.com / 465).
-      # SMTP_SECURE, SMTP_USER, SMTP_PASS and MAIL_FROM come from .env.
+      # Mail: Mailpit unless DOCKER_SMTP_HOST/PORT/SECURE are set in .env
+      # (Gmail: smtp.gmail.com / 465 / true). SMTP_USER, SMTP_PASS and MAIL_FROM come from .env.
       SMTP_HOST: ${DOCKER_SMTP_HOST:-mailpit}
       SMTP_PORT: ${DOCKER_SMTP_PORT:-1025}
+      SMTP_SECURE: ${DOCKER_SMTP_SECURE:-false}
       PORT: 3000
     ports:
       - "${PORT:-3000}:3000"

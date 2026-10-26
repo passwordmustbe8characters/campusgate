@@ -14,5 +14,15 @@
         <tr><th>Average sign-in time (ms)</th><td data-metric="avgSignInMs"><%= snapshot.avgSignInMs === null ? '–' : snapshot.avgSignInMs %></td></tr>
       </tbody>
     </table>
+    <h2>Simulate rush hour</h2>
+    <p class="hint">Starts virtual students that sign in like real ones (seeded demo accounts only; no real users or emails).
+      Turn the waiting room off or on in Policies to compare. Not available in production.</p>
+    <form data-api="/admin/simulate" novalidate>
+      <label>Number of students <input name="users" inputmode="numeric" value="300" required></label>
+      <label>Arriving over (seconds) <input name="rampSec" inputmode="numeric" value="30" required></label>
+      <button type="submit">Start</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <p data-sim-status class="hint"></p>
     <script src="/public/js/admin-dashboard.js" defer></script>
 <%- include('partials/bottom') %>

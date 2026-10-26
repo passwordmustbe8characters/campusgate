@@ -13,6 +13,7 @@ const { normalizeId, normalizeEmail, looksLikeEmail } = require('../services/ide
 const { unlockUser, resetTwoFactor, setUserActive, searchUsers, listLockedUsers } = require('../services/userService');
 const { setPolicy, setRole, policyHistory, AdminChangeError, POLICY_FIELDS } = require('../services/adminChangeService');
 const { VoucherError, VOUCHER_SERVICES } = require('../services/vouchers');
+const { SimulatorError } = require('../services/simulator');
 
 const ROLES = ['student', 'staff', 'guest', 'admin'];
 const WINDOW_SERVICES = ['fees', 'hostel', 'course_registration'];
@@ -37,7 +38,7 @@ function logFilters(q) {
  */
 function adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permissions, services }) {
   const router = express.Router();
-  const { audit, sessions, preauthTickets, dashboard, accessWindows, vouchers } = services;
+  const { audit, sessions, preauthTickets, dashboard, accessWindows, vouchers, simulator } = services;
   const admin = [requireSignedIn, requireAdmin2FA({ db }), requirePermission(permissions, 'admin_console')];
   const change = [...admin, recent];
   const ctxOf = (req) => ({ ...auditContext(req), actor: `admin:${req.account.userId}` });
@@ -81,6 +82,24 @@ function adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permiss
       open = false;
       clearInterval(timer);
     });
+  });
+
+  // ---- Simulate rush hour (FR-P8) ----
+  router.post('/admin/simulate', ...change, async (req, res) => {
+    const ctx = ctxOf(req);
+    try {
+      const run = await simulator.start({ users: Number(req.body.users), rampSec: Number(req.body.rampSec), actor: ctx.actor });
+      await audit.record('rush_hour_simulated', { success: true, details: { actor: ctx.actor, users: run.users, rampSec: run.rampSec } }, ctx);
+      return res.status(202).json({ message: `Started: ${run.users} virtual students arriving over ${run.rampSec} s. Watch the figures above.` });
+    } catch (err) {
+      if (err instanceof SimulatorError) return res.status(409).json({ error: err.message });
+      throw err;
+    }
+  });
+
+  router.get('/admin/simulate/status', ...admin, async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(await simulator.status());
   });
 
   // ---- Users (FR-D2, FR-A6) ----
