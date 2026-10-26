@@ -37,6 +37,7 @@ const POLICY_FIELDS = Object.freeze({
   queue_capacity: INT,
   queue_batch: INT,
   queue_interval_sec: INT,
+  queue_enabled: BOOL,
 });
 // FR-A13: pinned to true by a CHECK constraint and deliberately not settable.
 const NOT_SETTABLE = new Set(['require_2fa_admin', 'id', 'updated_by', 'updated_at']);

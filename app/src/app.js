@@ -15,6 +15,7 @@ const { portalRouter } = require('./routes/portal');
 const { createPortalService } = require('./services/portalService');
 const { createCsrf } = require('./middleware/csrf');
 const { sessionCookies, requireSession, requireRecentSignIn } = require('./middleware/session');
+const { createRateLimiter } = require('./middleware/rateLimit');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
@@ -97,6 +98,13 @@ function createApp({
   const requireSignedIn = requireSession(sessionDeps);
   const requireSignedInOrEnrolment = requireSession(sessionDeps, { allowEnrolment: true });
   const recent = requireRecentSignIn();
+  const rateLimiter = createRateLimiter({
+    redis,
+    hmacKey: config.tokenHmacKey,
+    perIpPerMin: config.rateLimitIpPerMin,
+    perAccountPerMin: config.rateLimitAccountPerMin,
+    metrics: services.metrics,
+  });
 
   const controller = createAuthController({ ...services, cookies, getPolicy: () => getPolicy(db) });
   const settings = createSettingsController({ ...services, cookies });
@@ -130,7 +138,7 @@ function createApp({
   app.use(csrf.doubleCsrfProtection);
   // pagesRouter's requireAccountOrEnrolment slot now takes the session check (security settings page).
   app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment: requireSignedInOrEnrolment, settingsService: services.settingsService }));
-  app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent }));
+  app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent, rateLimiter }));
   app.use(portalRouter({ csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService }));
 
   app.use(notFound);

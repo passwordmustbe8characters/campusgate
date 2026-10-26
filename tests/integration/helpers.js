@@ -214,6 +214,9 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     TOTP_ENC_KEY: TEST_KEYS.totpEncKey,
     AUDIT_HMAC_KEY: TEST_KEYS.auditHmacKey,
     JWT_SECRET: TEST_KEYS.jwtSecret,
+    // Most tests sign in many times from 127.0.0.1; rateLimit.test.js sets real limits.
+    RATE_LIMIT_IP_PER_MIN: '1000000',
+    RATE_LIMIT_ACCOUNT_PER_MIN: '1000000',
     ...env,
   });
   const app = createApp({

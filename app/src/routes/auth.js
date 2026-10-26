@@ -86,18 +86,26 @@ const changeRules = [passwordField('currentPassword'), passwordField('newPasswor
  * @param requireSignedInOrEnrolment  session check that also admits an enrolment-only session (ENROLMENT_ROUTES)
  * @param recent                      sign-in must be recent: security changes only
  */
-function authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent }) {
+function authRouter({
+  controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent, rateLimiter, admission,
+}) {
   const router = express.Router();
   const requireAccount = [requireSignedIn, recent];
   const requireAccountOrEnrolment = [requireSignedInOrEnrolment, recent];
-  router.post('/auth/register', registerRules, validate, controller.register);
-  router.post('/auth/login', loginRules, validate, controller.login);
+  // Rate limits (FR-P4) run first, before validation, so malformed floods are limited too.
+  const rl = (scope, byAccount) => rateLimiter.limit(scope, { byAccount });
+  // Waiting room (FR-P2): only the START of a sign-in needs admission.
+  const admit = admission || [];
 
-  // Second step of sign-in (pre-auth ticket cookie).
-  router.post('/auth/otp', sixDigitCode(), validate, controller.verifySecondFactor('email', 'code'));
-  router.post('/auth/otp/resend', controller.resendOtp);
+  router.post('/auth/register', rl('register', true), registerRules, validate, controller.register);
+  router.post('/auth/login', rl('login', true), admit, loginRules, validate, controller.login);
+
+  // Second step of sign-in (pre-auth ticket cookie; the ticket has its own attempt limit).
+  router.post('/auth/otp', rl('second_factor', false), sixDigitCode(), validate, controller.verifySecondFactor('email', 'code'));
+  router.post('/auth/otp/resend', rl('second_factor', false), controller.resendOtp);
   router.post(
     '/auth/totp/verify',
+    rl('second_factor', false),
     body().custom((b) => (typeof b.code === 'string') !== (typeof b.backupCode === 'string'))
       .withMessage('Enter an authenticator code or a backup code.'),
     body('code').optional().isString().trim().matches(/^\d{6}$/).withMessage('Enter the 6-digit code.'),
@@ -119,8 +127,8 @@ function authRouter({ controller, settings, passwords, requireSignedIn, requireS
   router.post('/auth/password/change', requireAccount, changeRules, validate, passwords.change);
 
   // Password recovery (no ticket: the emailed token is the proof).
-  router.post('/auth/password/forgot', forgotRules, validate, passwords.forgot);
-  router.post('/auth/password/reset', resetRules, validate, passwords.reset);
+  router.post('/auth/password/forgot', rl('forgot', true), forgotRules, validate, passwords.forgot);
+  router.post('/auth/password/reset', rl('reset', false), resetRules, validate, passwords.reset);
   return router;
 }
 

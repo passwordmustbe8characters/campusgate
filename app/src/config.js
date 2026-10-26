@@ -155,6 +155,12 @@ function loadConfig(env = process.env) {
     // --- Phase 4: login-once session ---
     // HS256 signing key for session tokens. Changing it signs everyone out.
     jwtSecret: key(env, 'JWT_SECRET', { minBytes: 32 }, errors),
+
+    // --- Phase 5: rate limiting (FR-P4), per minute ---
+    // Per IP is generous because a whole campus can share one public IP (NAT);
+    // per account is tight. Lockout still stops password guessing.
+    rateLimitIpPerMin: intInRange(env, 'RATE_LIMIT_IP_PER_MIN', 300, 1, 1000000, errors),
+    rateLimitAccountPerMin: intInRange(env, 'RATE_LIMIT_ACCOUNT_PER_MIN', 10, 1, 1000000, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {
