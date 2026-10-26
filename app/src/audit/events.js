@@ -45,6 +45,7 @@ const EVENT_TYPES = Object.freeze({
   // Admin actions (fail closed)
   admin_unlock: { details: ['actor'], critical: true },
   admin_reset_2fa: { details: ['actor', 'backupCodesRemoved'], critical: true },
+  admin_user_status: { details: ['actor', 'active'], critical: true },
   policy_changed: { details: ['actor', 'fields'], critical: true },
   role_changed: { details: ['actor', 'from', 'to'], critical: true },
   permission_changed: { details: ['actor', 'action', 'role', 'service'], critical: true },

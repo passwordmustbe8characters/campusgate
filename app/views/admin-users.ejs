@@ -1,0 +1,56 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Users</h1>
+    <form method="get" action="/admin/users">
+      <label for="q">Find by matric/staff ID or email (start of it)</label>
+      <input id="q" name="q" value="<%= q %>" maxlength="254">
+      <button type="submit">Search</button>
+    </form>
+
+    <% if (q) { %>
+      <h2>Results</h2>
+      <% if (users.length === 0) { %><p>No accounts match.</p><% } else { %>
+      <table>
+        <thead><tr><th>ID</th><th>Role</th><th>Active</th><th>Locked</th><th>Failures</th><th>2FA</th><th>Last sign-in</th></tr></thead>
+        <tbody>
+          <% users.forEach(function (u) { %>
+            <tr><td><%= u.matric_or_staff_id %></td><td><%= u.role %></td><td><%= u.is_active ? 'yes' : 'NO' %></td>
+              <td><%= u.is_locked ? 'LOCKED' : 'no' %></td><td><%= u.failed_attempts %></td>
+              <td><%= u.two_factor_enabled ? u.two_factor_method : 'off' %></td>
+              <td><%= u.last_login ? u.last_login.toISOString().slice(0, 16).replace('T', ' ') : '–' %></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+      <% } %>
+    <% } %>
+
+    <h2>Locked accounts</h2>
+    <% if (locked.length === 0) { %><p>No accounts are locked.</p><% } else { %>
+      <ul><% locked.forEach(function (u) { %><li><%= u.matric_or_staff_id %> (until <%= u.locked_until.toISOString().slice(11, 16) %> UTC)</li><% }) %></ul>
+    <% } %>
+
+    <h2>Actions</h2>
+    <p class="hint">Changes need a sign-in from the last 10 minutes. Each one is recorded in the audit log.</p>
+    <form data-api="/admin/users/unlock" data-reload novalidate>
+      <label>Unlock account <input name="identifier" maxlength="254" placeholder="ID or email" required></label>
+      <button type="submit">Unlock</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <form data-api="/admin/users/reset-2fa" novalidate>
+      <label>Reset two-step sign-in (lost phone) <input name="identifier" maxlength="254" placeholder="ID or email" required></label>
+      <button type="submit">Reset 2FA</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <form data-api="/admin/users/status" data-reload novalidate>
+      <label>Account <input name="identifier" maxlength="254" placeholder="ID or email" required></label>
+      <label>Set to <select name="active"><option value="false">Inactive (cannot sign in)</option><option value="true">Active</option></select></label>
+      <button type="submit">Apply</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <form data-api="/admin/users/role" novalidate>
+      <label>Account <input name="identifier" maxlength="254" placeholder="ID or email" required></label>
+      <label>New role <select name="role"><% roles.forEach(function (r) { %><option><%= r %></option><% }) %></select></label>
+      <button type="submit">Change role</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+<%- include('partials/bottom') %>

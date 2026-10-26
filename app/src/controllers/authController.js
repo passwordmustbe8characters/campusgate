@@ -40,7 +40,7 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
   }
 }
 
-function createAuthController({ authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom }) {
+function createAuthController({ authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom, recordLoginTime }) {
   const sessionDeps = { sessions, cookies, getPolicy, waitingRoom };
 
   async function signIn(req, res, user) {
@@ -63,7 +63,10 @@ function createAuthController({ authService, secondFactor, sessions, cookies, ge
 
   async function login(req, res) {
     const { identifier, password } = req.body;
+    const t0 = process.hrtime.bigint();
     const result = await authService.login({ identifier, password }, auditContext(req));
+    // Dashboard "average sign-in time" (FR-D1): server time of the password step.
+    if (recordLoginTime) recordLoginTime(Number(process.hrtime.bigint() - t0) / 1e6);
 
     if (!result.ok) {
       return res.status(401).json({ error: loginFailedMessage(result.policy) });

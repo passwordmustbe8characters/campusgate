@@ -1,0 +1,18 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Dashboard</h1>
+    <p class="hint">Live: updates every 2 seconds. <span data-dash-status></span></p>
+    <table class="dashboard">
+      <tbody>
+        <tr><th>Sign-ins (last minute)</th><td data-metric="signInsPerMin"><%= snapshot.signInsPerMin %></td></tr>
+        <tr><th>Failed sign-ins (last minute)</th><td data-metric="failuresPerMin"><%= snapshot.failuresPerMin %></td></tr>
+        <tr><th>Lockouts (last minute)</th><td data-metric="lockoutsPerMin"><%= snapshot.lockoutsPerMin %></td></tr>
+        <tr><th>Active sessions</th><td data-metric="activeSessions"><%= snapshot.activeSessions %></td></tr>
+        <tr><th>Locked accounts</th><td data-metric="lockedAccounts"><%= snapshot.lockedAccounts %></td></tr>
+        <tr><th>Waiting-room queue</th><td data-metric="queueLength"><%= snapshot.queueLength %></td></tr>
+        <tr><th>Sign-ins in progress</th><td data-metric="signInsInProgress"><%= snapshot.signInsInProgress %></td></tr>
+        <tr><th>Average sign-in time (ms)</th><td data-metric="avgSignInMs"><%= snapshot.avgSignInMs === null ? '–' : snapshot.avgSignInMs %></td></tr>
+      </tbody>
+    </table>
+    <script src="/public/js/admin-dashboard.js" defer></script>
+<%- include('partials/bottom') %>

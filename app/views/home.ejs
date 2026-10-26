@@ -13,6 +13,7 @@
 
     <h2>Account</h2>
     <ul class="menu">
+      <% if (can.admin_console) { %><li><a href="/admin">Admin console</a></li><% } %>
       <li><a href="/account/security">Security settings</a></li>
     </ul>
     <form data-api="/auth/logout" data-redirect="/login" novalidate>

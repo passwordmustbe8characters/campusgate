@@ -1,0 +1,34 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Policies</h1>
+    <p class="hint">Changes apply to the next request, with no restart. Each change is recorded below and in the audit log.
+      Two-step sign-in for administrators is always required and cannot be turned off.</p>
+    <form data-api="/admin/policies" data-reload novalidate>
+      <% fields.forEach(function (f) { %>
+        <label for="<%= f %>"><%= f.replace(/_/g, ' ') %></label>
+        <% if (typeof policy[f] === 'boolean') { %>
+          <select id="<%= f %>" name="<%= f %>">
+            <option value="true" <%= policy[f] ? 'selected' : '' %>>true</option>
+            <option value="false" <%= policy[f] ? '' : 'selected' %>>false</option>
+          </select>
+        <% } else { %>
+          <input id="<%= f %>" name="<%= f %>" inputmode="numeric" value="<%= policy[f] %>">
+        <% } %>
+      <% }) %>
+      <button type="submit">Save changes</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+
+    <h2>Change history</h2>
+    <% if (history.length === 0) { %><p>No changes recorded yet.</p><% } else { %>
+      <table>
+        <thead><tr><th>When (UTC)</th><th>What</th><th>Before</th><th>After</th><th>By</th></tr></thead>
+        <tbody>
+          <% history.forEach(function (h) { %>
+            <tr><td><%= h.changed_at.toISOString().slice(0, 16).replace('T', ' ') %></td><td><%= h.subject %> <%= h.subject_id %></td>
+              <td><%= JSON.stringify(h.old_value) %></td><td><%= JSON.stringify(h.new_value) %></td><td><%= h.actor %></td></tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+<%- include('partials/bottom') %>

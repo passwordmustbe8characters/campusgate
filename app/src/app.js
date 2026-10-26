@@ -19,6 +19,8 @@ const { createRateLimiter } = require('./middleware/rateLimit');
 const { requireAdmission } = require('./middleware/admission');
 const { queueRouter } = require('./routes/queue');
 const { createWaitingRoom } = require('./services/waitingRoom');
+const { createDashboard, createLoginTimer } = require('./services/dashboard');
+const { adminRouter } = require('./routes/admin');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
@@ -62,6 +64,9 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     logger,
     audit,
   });
+  const waitingRoom = createWaitingRoom({
+    redis, hmacKey: config.tokenHmacKey, passTtlSec: config.queuePassTtlSec, ticketTimeoutSec: config.queueTicketTimeoutSec,
+  });
   return {
     permissions: createPermissions({ db, redis, logger }),
     audit,
@@ -72,9 +77,9 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     secondFactor,
     metrics,
     portalService: createPortalService({ db }),
-    waitingRoom: createWaitingRoom({
-      redis, hmacKey: config.tokenHmacKey, passTtlSec: config.queuePassTtlSec, ticketTimeoutSec: config.queueTicketTimeoutSec,
-    }),
+    waitingRoom,
+    dashboard: createDashboard({ db, redis, waitingRoom }),
+    recordLoginTime: createLoginTimer({ redis, logger }),
     authService: createAuthService({ db, hasher, logger, audit }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
@@ -148,6 +153,7 @@ function createApp({
   app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment: requireSignedInOrEnrolment, settingsService: services.settingsService }));
   app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent, rateLimiter, admission }));
   app.use(queueRouter({ csrf, waitingRoom: services.waitingRoom, getPolicy: policyNow, cookies }));
+  app.use(adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permissions: services.permissions, services }));
   app.use(portalRouter({ csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService }));
 
   app.use(notFound);

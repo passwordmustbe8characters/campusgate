@@ -28,9 +28,13 @@ describe('session checks are on exactly the right routes', () => {
     expect(using).toEqual([...ENROLMENT_ROUTES].sort());
   });
 
-  test('every account-security change needs a session AND a recent sign-in', () => {
+  test('every account-security change and every admin change needs a session AND a recent sign-in', () => {
     const app = buildTestApp();
-    expect(routesWhere(app, (fn) => fn.requiresRecentSignIn === true)).toEqual([...SECURITY_CHANGE_ROUTES].sort());
+    const ADMIN_CHANGES = [
+      'GET /admin/logs/export', 'POST /admin/logs/verify', 'POST /admin/policies', 'POST /admin/users/reset-2fa',
+      'POST /admin/users/role', 'POST /admin/users/status', 'POST /admin/users/unlock',
+    ];
+    expect(routesWhere(app, (fn) => fn.requiresRecentSignIn === true)).toEqual([...SECURITY_CHANGE_ROUTES, ...ADMIN_CHANGES].sort());
     const withSession = routesWhere(app, (fn) => fn.requiresSession === true);
     for (const route of SECURITY_CHANGE_ROUTES) expect(withSession).toContain(route);
   });
@@ -49,6 +53,13 @@ describe('session checks are on exactly the right routes', () => {
     const app = buildTestApp();
     expect(routesWhere(app, (fn) => fn.requiresSession === true)).toEqual(expect.arrayContaining(['POST /auth/logout', 'POST /auth/logout-all']));
     expect(routesWhere(app, (fn) => fn.allowsEnrolment === true)).not.toContain('POST /auth/logout-all');
+  });
+
+  test('every /admin route requires a session (no admin page or API is reachable without one)', () => {
+    const app = buildTestApp();
+    const adminRoutes = routesWhere(app, () => true).filter((r) => r.includes(' /admin'));
+    expect(adminRoutes.length).toBeGreaterThanOrEqual(11);
+    expect(routesWhere(app, (fn) => fn.requiresSession === true)).toEqual(expect.arrayContaining(adminRoutes));
   });
 
   test('no global (app-level) middleware requires a session', () => {

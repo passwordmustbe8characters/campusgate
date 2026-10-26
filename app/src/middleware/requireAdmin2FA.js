@@ -7,9 +7,9 @@ const { loadAccount } = require('../services/accountState');
  * Enforced regardless of policies.require_2fa_admin (that column is pinned to
  * true by a CHECK constraint and is not exposed as a setting).
  *
- * Expects req.account.userId (set by the account ticket in Phase 2).
- * TODO(Phase 3/4/6): put this in front of every /admin/* route, reading the
- * user from the JWT session instead of the interim account ticket.
+ * Expects req.account.userId (set by requireSession). Runs in front of every
+ * /admin route. It reads the account from the database (one query), so a
+ * role or 2FA change applies at once, whatever the token claims.
  */
 function requireAdmin2FA({ db }) {
   return async (req, res, next) => {

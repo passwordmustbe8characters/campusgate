@@ -68,6 +68,37 @@ async function resetTwoFactor(db, identifier, { audit, ctx = {} } = {}) {
   });
 }
 
+/**
+ * Deactivate or reactivate an account (FR-D2). An inactive account cannot sign
+ * in (same generic error as a wrong password). Returns the updated row, or
+ * null when no such user exists. Audited FAIL CLOSED, in the same transaction.
+ * The caller revokes the user's sessions after deactivating.
+ */
+async function setUserActive(db, identifier, active, { audit, ctx = {} } = {}) {
+  requireAudit(audit);
+  return db.transaction(async (trx) => {
+    const [row] = await trx('users')
+      .where(byIdentifier(identifier))
+      .update({ is_active: Boolean(active) })
+      .returning(['id', ...STATUS_COLUMNS]);
+    if (!row) return null;
+    await audit.recordCritical(trx, 'admin_user_status', { userId: row.id, success: true, details: { actor: ctx.actor || 'cli', active: Boolean(active) } }, ctx);
+    return row;
+  });
+}
+
+/** Search accounts by matric/staff ID or email (prefix, case-insensitive). */
+async function searchUsers(db, text, { limit = 50 } = {}) {
+  const q = db('users').join('roles', 'roles.id', 'users.role_id')
+    .select(...STATUS_COLUMNS.map((c) => `users.${c}`), 'roles.name as role',
+      db.raw('(users.locked_until IS NOT NULL AND users.locked_until > now()) AS is_locked'))
+    .orderBy('users.matric_or_staff_id').limit(limit);
+  const t = typeof text === 'string' ? text.trim() : '';
+  if (t === '') return q;
+  const pattern = `${t.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
+  return q.where((w) => w.whereRaw('users.matric_or_staff_id ILIKE ?', [pattern]).orWhereRaw('users.email ILIKE ?', [pattern]));
+}
+
 async function getUserStatus(db, identifier) {
   const row = await db('users')
     .where(byIdentifier(identifier))
@@ -82,4 +113,4 @@ async function listLockedUsers(db) {
     .select(...STATUS_COLUMNS);
 }
 
-module.exports = { unlockUser, resetTwoFactor, getUserStatus, listLockedUsers };
+module.exports = { unlockUser, resetTwoFactor, setUserActive, searchUsers, getUserStatus, listLockedUsers };

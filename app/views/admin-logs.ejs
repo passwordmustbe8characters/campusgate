@@ -1,0 +1,34 @@
+<%- include('partials/top', { title, csrfToken }) %>
+<%- include('partials/admin-nav') %>
+    <h1>Audit log</h1>
+    <form data-api="/admin/logs/verify" novalidate>
+      <button type="submit">Verify integrity</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+
+    <form method="get" action="/admin/logs">
+      <label>Event <select name="type"><option value="">(any)</option>
+        <% eventTypes.forEach(function (t) { %><option <%= query.type === t ? 'selected' : '' %>><%= t %></option><% }) %></select></label>
+      <label>User (ID or email) <input name="user" value="<%= query.user || '' %>" maxlength="254"></label>
+      <label>From <input name="from" type="date" value="<%= query.from || '' %>"></label>
+      <label>To <input name="to" type="date" value="<%= query.to || '' %>"></label>
+      <label>Result <select name="success"><option value="">(any)</option>
+        <option value="true" <%= query.success === 'true' ? 'selected' : '' %>>success</option>
+        <option value="false" <%= query.success === 'false' ? 'selected' : '' %>>failure</option></select></label>
+      <label>IP <input name="ip" value="<%= query.ip || '' %>" maxlength="64"></label>
+      <button type="submit">Filter</button>
+    </form>
+    <p><a href="/admin/logs/export?<%= new URLSearchParams(Object.entries(filters).map(function (e) { return [e[0], String(e[1])]; })).toString() %>">Download these rows as CSV</a> (all matching rows, not only the 100 shown)</p>
+
+    <table>
+      <thead><tr><th>#</th><th>When (UTC)</th><th>Event</th><th>Result</th><th>User</th><th>IP</th><th>Details</th></tr></thead>
+      <tbody>
+        <% rows.forEach(function (r) { %>
+          <tr><td><%= r.seq %></td><td><%= r.occurred_at.toISOString().slice(0, 19).replace('T', ' ') %></td><td><%= r.event_type %></td>
+            <td><%= r.success ? 'ok' : 'FAIL' %></td><td><%= r.user_id || '–' %></td><td><%= r.ip || '–' %></td>
+            <td><%= JSON.stringify(r.details) %></td></tr>
+        <% }) %>
+      </tbody>
+    </table>
+    <% if (rows.length === 0) { %><p>No matching rows.</p><% } %>
+<%- include('partials/bottom') %>
