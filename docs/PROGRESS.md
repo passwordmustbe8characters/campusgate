@@ -10,7 +10,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 1 | Core authentication | Done 2026-10-11 (FR-A6 partial until Phases 3 and 6) |
 | 2 | Second factors and recovery | Done 2026-10-17 (FR-A10 and FR-A13 PARTIAL until Phases 4 and 6) |
 | 3 | Authorization and audit logs | Done 2026-10-24 (sync audit mode; FR-Z1, L3, L4 PARTIAL until Phases 4 and 6; queue mode = future work) |
-| 4 | Sessions, token, mock portal | Not started |
+| 4 | Sessions, token, mock portal | Done 2026-10-26 (LITE scope; branch `phase4-lite`, merged after the final full run) |
 | 5 | Peak-load core | Not started |
 | 6 | Admin console | Not started |
 | 7 | P1 features | Not started |
@@ -40,14 +40,14 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | For phase | Item |
 |---|---|
 | ~~3~~ | ~~Audit-log admin unlocks and all Phase 1/2 events~~: **done in Phase 3** (see Phase 3 section). |
-| 4 | Audit events for sign-out, sign-out-everywhere and session revocation; session records (FR-L2). Protect the portal routes with `requirePermission` (FR-Z1). |
+| ~~4~~ | ~~Audit events for sign-out, sign-out-everywhere and session revocation; session records (FR-L2). Protect the portal routes with `requirePermission` (FR-Z1).~~ **Done in Phase 4.** |
 | 6 | Admin console screens for the audit log: "Verify integrity" button (FR-L3), logs viewer with filters and CSV export (FR-L4), using the existing `verifyChain`, `iterateRows` and `csv` modules. Policy/role/permission editing UI calling `adminChangeService` (FR-Z5). |
 | 8 | **Measure the audit cost on the login path** (sync mode: every login waits on the chain's advisory lock). `calibrate` should report login latency/throughput with the audit write. If it is a bottleneck, the queue-mode prototype (branch `audit-queue-experimental`) is the planned remedy; Redis AOF (`appendfsync everysec`, with a volume) would then be needed and its cost measured too. |
 | 9 | A limited application database role that cannot `ALTER TABLE auth_logs DISABLE TRIGGER`: today the app connects as the table owner, who can switch the append-only triggers off (the hash chain still detects any change made that way). |
 | 9 | **Known limit of the outside anchor.** The anchor (latest seq + hash, in Redis) catches deletion of the newest rows only **until the app writes past the old anchored position**: new events link correctly to the shortened chain, and the anchor then moves forward to the new head, so the deletion is no longer visible. Run `audit verify` regularly (Phase 6 button, or a scheduled job) to narrow that window; a stronger fix is an append-only history of anchors kept outside the database (for example periodic anchors written to a file or another system). |
-| 4 | **Delete the interim account ticket** (`cg.acct`, `app/src/middleware/tickets.js`) and use the JWT session, with a "signed in recently" check for security settings. |
-| 4 | FR-A10 / reset: revoke the user's **sessions** after a password reset or change (today only pre-auth and account tickets are revoked). |
-| 4 | Bind CSRF tokens to the session (JWT `jti`) instead of the pre-session cookie. |
+| ~~4~~ | ~~**Delete the interim account ticket** and use the JWT session, with a "signed in recently" check.~~ **Done in Phase 4.** |
+| ~~4~~ | ~~FR-A10 / reset: revoke the user's **sessions** after a password reset or change.~~ **Done in Phase 4.** |
+| 9 | CSRF tokens stay bound to the pre-session cookie (not the JWT `jti`); see the Phase 4 decision. Revisit with HTTPS in Phase 9. |
 | 3/4/6 | Put `requireAdmin2FA` (`app/src/middleware/requireAdmin2FA.js`) in front of every `/admin/*` route (FR-A13). |
 | 5 | Cache the `policies` row (per process or in Redis) **with invalidation on change**, instead of reading it from PostgreSQL on every login/registration. Measure before and after. |
 | 5 | Front-end exponential backoff on 429/503 in `app/public/js/forms.js`. |
@@ -893,3 +893,72 @@ then `docker compose exec redis redis-cli DEL cg:audit:head` to clear the anchor
 - `npm run admin -- policy set max_attempts=3 --confirm`, then `npm run admin -- history`, then `npm run audit -- search --type policy_changed`.
 - `npm run admin -- perm list`.
 - `npm test` summary (unit 131, integration 160) and the per-suite time table above.
+
+---
+
+## Phase 4: Sessions, token, mock portal (2026-10-26, LITE scope)
+
+| Sub-step | Commit | What |
+|---|---|---|
+| 4.1 | `504ebb7` | JWT session, `sessions` table, sign-out / sign-out everywhere, revocation, recent sign-in check, interim account ticket removed |
+| 4.2 | `a850c74` | `/home`, Fees / Hostel / Course registration pages with demonstration data, demo invoices |
+| 4.3 | (this commit) | Docs |
+
+**Test-run rule changed (developer, 2026-10-26):** to save time, each sub-step runs only the touched and closest related suites; ONE full run happens at the end of all remaining phases, before merging to `main`. (4.1 still had a full run: unit 134/134, integration 177/177, 218 s.)
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-P1 | Done | Login once: HS256 JWT in an HttpOnly, SameSite=Strict cookie (`cg.session`; `__Host-` prefix and Secure when `COOKIE_SECURE=true`). Pages check signature + expiry + one Redis lookup; **no database query for authentication** (tested by counting queries). |
+| FR-P6 | Done | Revocation by `jti` denylist in Redis: sign-out, sign-out everywhere, password reset/change, role change and 2FA reset (CLI). |
+| FR-L2 | Done | `sessions` table: user, jti, scope, IP, user agent, start, expiry, revoked time and reason. End = `revoked_at`, or `expires_at` if never revoked; duration = end − start. |
+| FR-A10 | Done | Password change (and reset) now signs the user out of **every** session, including other devices. |
+| FR-M1, FR-M2 | Done | `/portal/fees`, `/portal/hostel`, `/portal/registration` read seeded DEMONSTRATION data; each checks the token and the role permission, no second sign-in. |
+| FR-Z1 | Done for the portal | `requirePermission` on every portal route; admin routes come with the console (Phase 6). |
+| FR-A13 | Still PARTIAL | Admin without TOTP gets an **enrolment-only session** (accepted only on the enrolment routes and sign-out). The console itself is Phase 6. |
+| FR-M3, FR-Z3 | Not in LITE scope | Step-up OTP on payment and the concurrent-session limit are Phase 7. |
+
+### How the session works
+- **Issue:** after a completed sign-in, `sessions.issue()` writes a `sessions` row and signs `{sub, role, scope, jti, iat, exp, iss, aud}` with `JWT_SECRET` (HS256). Lifetime = `policies.session_timeout_min` read at each sign-in (default 30; change with `npm run admin -- policy set session_timeout_min=N --confirm`, no restart). An enrolment-only session lasts at most 10 minutes.
+- **Check (`requireSession`):** verify signature, algorithm (`HS256` only), issuer, audience and expiry; then `EXISTS cg:revoked:<jti>` in Redis. Bad or revoked token: GET redirects to `/login`, API calls get 401 `restart`; the bad cookie is cleared.
+- **Redis down: fail closed.** If the denylist cannot be read, protected pages return **503** ("Sign-in checks are unavailable right now"), never accept an unchecked token. Sign-in itself still works without Redis for password-only accounts (the session record is in PostgreSQL), but the pages refuse it until Redis is back. Recorded as a limitation: availability of protected pages depends on Redis.
+- **Revoke:** the jti goes on the Redis denylist (until the token would expire, plus 5 s) **before** the row is marked revoked, so a database failure cannot leave a working token. Re-running is safe; the count reports only sessions newly ended.
+- **Recent sign-in:** security changes (enable 2FA, TOTP enrolment, change password) need a sign-in from the last **10 minutes**; an older but valid session can still view the settings page.
+- **Audit events (fail open):** `logout`, `logout_all` (count), `sessions_revoked` (reason, count, actor).
+
+### Decisions
+- **CSRF stays bound to the pre-session cookie**, not the JWT `jti`. The pre-session cookie already lasts across sign-in, and every form (forms.js contract) keeps working unchanged; binding to the jti would mean re-issuing the CSRF token at every sign-in and sign-out. Revisit in Phase 9 with HTTPS.
+- **`jsonwebtoken` 9.0.3** (published 2025-12-04; dependencies `jws` 4.0.1 2025-12-04, `jwa` 2.0.1 2025-05-07, others 2013–2026-06), pinned exactly. The lock was updated **from the existing lock** inside `node:24-slim`, so only `jsonwebtoken` and its 13 dependencies were added; no existing package moved. (A first attempt that regenerated from `package.json` alone bumped 20+ unrelated packages and was thrown away.)
+- **Demo data lives in a migration** (`demo_fees`, `demo_courses`, `demo_hostels`), labelled DEMONSTRATION DATA on every page, with invented hall names ("Hall A (demo)") so nothing can be mistaken for real University data. Invoices (`demo_invoices`) get a reference `CG-YYYY-XXXXXXXX`; there are no bank details and no payment.
+- **pages.js untouched:** the security-settings page keeps its middleware slot; app.js now passes the session check into it.
+
+### Tests added or changed
+| File | What it proves |
+|---|---|
+| `sessions.test.js` (new) | Token claims and lifetime; record written without the token; tampered, wrong-key, `alg: none`, expired, wrong-issuer, bad-subject and unknown-scope tokens refused; revoke and revokeUser (other users untouched, expired skipped, counts only new); works without the signing key (CLI); a failed Redis write is recovered later; Redis down makes the check throw; DB constraints; cascade on user delete |
+| `sessionFlow.test.js` (new, replaces `accountTicket.test.js`) | Cookie flags and Max-Age from the policy; policy change applies to the next sign-in; settings need a session; email 2FA end to end; **recent sign-in required for changes**; pre-auth ticket refused by settings and session refused by sign-in endpoints; forged and expired tokens refused and cleared; **sign-out makes the copied token useless**; **sign-out everywhere ends other devices only for that user**; **password change signs out every device**; **Redis down = 503**; CSRF still required |
+| `portal.test.js` (new) | One sign-in opens Home + all three pages (one session row); level-specific fees and courses; **refused and unauthenticated requests make zero DB queries**; an allowed page queries only its demo table; revoked token and revoked permission take effect at once; demo invoice (unique reference, CSRF and session required); staff see the three services, a guest-role session none; an enrolment-only session cannot open the portal; Redis down = 503 |
+| `sessionRoutes.test.js` (unit, replaces `accountTicketRoutes.test.js`) | Route-tree scan: enrolment sessions accepted only on the enrolment routes + sign-out; every security change has the recent-sign-in check; sign-in/recovery endpoints never need a session; no global session middleware |
+| Updated | `admin2fa` (enrolment session revoked after enrolment; reset-2fa revokes sessions), `auditTools` (role change signs the user out), `emailOtp` (Redis down: sign-in OK but pages 503), `auditLog`, `migrations`, `config` (JWT_SECRET rules) |
+
+**Results:** 4.1 full run unit 134/134, integration 177/177 (218 s). 4.2: portal + migrations + sessionFlow 33/33, unit 134/134. Two failures in the first 4.1 run were test-side (the migrations table list; the audit test's grouping of CLI rows, now that `reset-2fa` also records `sessions_revoked`). One real bug was caught and fixed: "sign out everywhere" counted already-revoked sessions.
+
+### New `.env` line (required from Phase 4)
+```
+JWT_SECRET=<32 random bytes, base64url>
+```
+Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`. It must differ from every other key. Changing it signs everyone out. Remove the old `ACCOUNT_TICKET_TTL_MIN` line if present (it is no longer read).
+
+### Demo by hand (log-out demo)
+1. Sign in at http://localhost:3000/login (seeded student, e.g. `SCI/2025/0001`). You land on **Home**.
+2. Open Fees, Hostel and Course registration: no second sign-in. Generate an invoice on Fees.
+3. Sign in as the same student in a second browser. In the first, press **Sign out everywhere**; reload the second browser: back to the sign-in page.
+4. `docker compose exec app npm run audit -- search --type logout_all` shows the event; `SELECT jti, revoke_reason, created_at, revoked_at FROM sessions;` shows the records.
+5. Stop Redis (`docker compose stop redis`) and reload a portal page: 503. Start it again: the page works.
+
+### Evidence to capture for the report
+- Home page and the three portal pages (with the DEMONSTRATION DATA banner); a generated invoice reference.
+- The second-browser sign-out-everywhere demo.
+- `sessions` rows with `revoke_reason` (`logout`, `logout_all`, `password_changed`).
+- The 503 page with Redis stopped.
+- Test summaries above.

@@ -3,6 +3,8 @@
 
 **Stack:** Node.js (Express), PostgreSQL, Redis, OMNeT++ (+ INET), FreeRADIUS | **Window:** 2 to 4 weeks | **Scope:** full, nothing cut
 
+> **Build status** of each requirement (Done / PARTIAL / not started) is kept in `docs/PROGRESS.md`, per phase. As of Phase 4: FR-P1, FR-P6, FR-L2, FR-A10, FR-M1 and FR-M2 are done; FR-Z1 is done for the portal (admin routes come with Phase 6).
+
 > **How to read priorities.** Everything below stays in scope. Tags only set the *order of work* so that if time runs short, the project still defends well: **P0** = core, must work for the demo; **P1** = strengthens the thesis; **P2** = extra credit, build last. Requirement IDs (FR-A1, NFR-3, etc.) are there so your colleague can reference them in the report.
 
 ---
