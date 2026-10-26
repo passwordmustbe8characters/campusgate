@@ -21,6 +21,10 @@ const { queueRouter } = require('./routes/queue');
 const { createWaitingRoom } = require('./services/waitingRoom');
 const { createDashboard, createLoginTimer } = require('./services/dashboard');
 const { adminRouter } = require('./routes/admin');
+const { emailPagesRouter } = require('./routes/emailPages');
+const { createRiskService } = require('./services/risk');
+const { createEmailVerification } = require('./services/emailVerification');
+const { createDeviceAlert } = require('./services/deviceAlert');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
@@ -80,7 +84,12 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     waitingRoom,
     dashboard: createDashboard({ db, redis, waitingRoom }),
     recordLoginTime: createLoginTimer({ redis, logger }),
-    authService: createAuthService({ db, hasher, logger, audit }),
+    authService: createAuthService({
+      db, hasher, logger, audit,
+      risk: config.riskScoring ? createRiskService({ db, now: clock ? () => new Date(clock.now()) : undefined }) : null,
+    }),
+    emailVerification: createEmailVerification({ db, redis, delivery, config, metrics, logger, audit }),
+    deviceAlert: createDeviceAlert({ db, delivery, metrics, logger, audit }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
       db, redis, hasher, delivery, config, tickets: [preauthTickets], sessions, metrics, logger, audit,
@@ -146,6 +155,11 @@ function createApp({
   app.use(cookieParser());
 
   app.use(healthRouter({ db, redis, timeoutMs: config.healthCheckTimeoutMs }));
+  // One-line notices on the sign-in page (?verified=1, ?admitted=1), read by the template.
+  app.use((req, res, next) => {
+    res.locals.flags = { verified: req.query.verified === '1', admitted: req.query.admitted === '1' };
+    next();
+  });
 
   // Every non-GET/HEAD/OPTIONS request below this line needs a valid CSRF token.
   app.use(csrf.doubleCsrfProtection);
@@ -153,6 +167,7 @@ function createApp({
   app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment: requireSignedInOrEnrolment, settingsService: services.settingsService }));
   app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent, rateLimiter, admission }));
   app.use(queueRouter({ csrf, waitingRoom: services.waitingRoom, getPolicy: policyNow, cookies }));
+  app.use(emailPagesRouter({ csrf }));
   app.use(adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permissions: services.permissions, services }));
   app.use(portalRouter({ csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService }));
 
@@ -160,7 +175,9 @@ function createApp({
   app.use(errorHandler(logger));
 
   // Lets graceful shutdown (and tests) wait for background emails to finish.
-  app.set('background', { idle: () => services.passwordService.idle() });
+  app.set('background', {
+    idle: () => Promise.all([services.passwordService.idle(), services.emailVerification.idle(), services.deviceAlert.idle()]),
+  });
   // Start-up / shutdown hooks for long-lived resources (permission map subscriber).
   app.set('services', services);
   return app;

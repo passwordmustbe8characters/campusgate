@@ -87,6 +87,8 @@ async function seedAll(knex, options) {
     ...user,
     username: user.matric_or_staff_id,
     password_hash: hashes[i],
+    // Demo accounts count as verified (FR-A2 applies to new sign-ups).
+    email_verified: true,
   }));
   await insertIgnoringExisting(knex, 'users', rows, 'matric_or_staff_id');
 

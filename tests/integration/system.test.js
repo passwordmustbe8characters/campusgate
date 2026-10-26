@@ -89,6 +89,7 @@ describe('whole app against real PostgreSQL and Redis', () => {
     const newPassword = 'Unique-Log-Check-77!';
 
     expect((await post('/auth/register', { matricNo: FREE[0].matric_no, email: 'log@example.com', password: newPassword, consent: true })).status).toBe(201);
+    await db('users').where({ matric_or_staff_id: FREE[0].matric_no }).update({ email_verified: true }); // FR-A2 step, tested in emailVerification.test.js
     expect((await post('/auth/login', { identifier: FREE[0].matric_no, password: 'Another-Wrong-55!' })).status).toBe(401);
     expect((await post('/auth/login', { identifier: FREE[0].matric_no, password: newPassword })).status).toBe(200);
 

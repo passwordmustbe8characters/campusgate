@@ -127,6 +127,11 @@ function authRouter({
   router.post('/auth/password/change', requireAccount, changeRules, validate, passwords.change);
 
   // Password recovery (no ticket: the emailed token is the proof).
+  // Email verification link (FR-A2): the token is the proof.
+  router.post('/auth/verify-email', rl('verify_email', false),
+    body('token').isString().withMessage('This link is invalid.').bail().isLength({ max: 64 }).withMessage('This link is invalid.'),
+    validate, controller.verifyEmail);
+
   router.post('/auth/password/forgot', rl('forgot', true), forgotRules, validate, passwords.forgot);
   router.post('/auth/password/reset', rl('reset', false), resetRules, validate, passwords.reset);
   return router;

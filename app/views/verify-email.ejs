@@ -1,0 +1,9 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Confirm your email</h1>
+    <p>Press the button to confirm your email address and activate sign-in.</p>
+    <form data-api="/auth/verify-email" data-token-from-hash data-redirect="/login?verified=1" novalidate>
+      <input type="hidden" name="token">
+      <button type="submit">Confirm my email</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+<%- include('partials/bottom') %>

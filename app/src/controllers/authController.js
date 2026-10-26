@@ -13,6 +13,8 @@ const loginFailedMessage = (policy) =>
 
 const RESTART_MESSAGE = 'Your sign-in has expired. Please sign in again.';
 const INVALID_CODE_MESSAGE = 'Invalid or expired code.';
+const VERIFY_EMAIL_SENT = 'Account created. We sent a link to your email: open it to confirm your address, then sign in.';
+const VERIFY_FIRST = 'Please confirm your email address first. We have sent a new link to your email (check Spam too).';
 
 // An enrolment-only session (admin without TOTP) is short whatever the policy says.
 const ENROLMENT_SESSION_MAX_MIN = 10;
@@ -22,11 +24,15 @@ const ENROLMENT_SESSION_MAX_MIN = 10;
  * a `sessions` record. Lifetime = policies.session_timeout_min, read now, so a
  * policy change applies to the next sign-in without a restart.
  */
-async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom }) {
+async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom, deviceAlert }) {
   const policy = await getPolicy();
   const ttlMin = scope === 'enrol'
     ? Math.min(policy.session_timeout_min, ENROLMENT_SESSION_MAX_MIN)
     : policy.session_timeout_min;
+  // FR-A12: compare with earlier sessions BEFORE this one is recorded.
+  if (deviceAlert && scope === 'full') {
+    await deviceAlert.checkAndNotify(user.id, { ip: req.ip, userAgent: req.get('user-agent') }, auditContext(req));
+  }
   const session = await sessions.issue({
     userId: user.id, role: user.role, scope, ttlMin, ip: req.ip, userAgent: req.get('user-agent'),
   });
@@ -40,8 +46,10 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
   }
 }
 
-function createAuthController({ authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom, recordLoginTime }) {
-  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom };
+function createAuthController({
+  authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom, recordLoginTime, emailVerification, deviceAlert,
+}) {
+  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom, deviceAlert };
 
   async function signIn(req, res, user) {
     await startSession(req, res, user, 'full', sessionDeps);
@@ -53,7 +61,8 @@ function createAuthController({ authService, secondFactor, sessions, cookies, ge
     const result = await authService.register({ matricNo, email, password }, auditContext(req));
 
     if (result.ok) {
-      return res.status(201).json({ message: 'Account created. You can now sign in.' });
+      await emailVerification.requestLink(result.userId, auditContext(req));
+      return res.status(201).json({ message: VERIFY_EMAIL_SENT });
     }
     if (result.kind === 'invalid') {
       return res.status(400).json({ error: 'Please correct the highlighted fields.', fields: result.fields });
@@ -68,6 +77,10 @@ function createAuthController({ authService, secondFactor, sessions, cookies, ge
     // Dashboard "average sign-in time" (FR-D1): server time of the password step.
     if (recordLoginTime) recordLoginTime(Number(process.hrtime.bigint() - t0) / 1e6);
 
+    if (!result.ok && result.reason === 'email_unverified') {
+      await emailVerification.requestLink(result.user.id, auditContext(req));
+      return res.status(401).json({ error: VERIFY_FIRST, unverified: true });
+    }
     if (!result.ok) {
       return res.status(401).json({ error: loginFailedMessage(result.policy) });
     }
@@ -139,7 +152,15 @@ function createAuthController({ authService, secondFactor, sessions, cookies, ge
     return res.status(200).json({ message: `You have signed out everywhere (${count} session${count === 1 ? '' : 's'} ended).` });
   }
 
-  return { register, login, verifySecondFactor, verifyTotpOrBackup, resendOtp, logout, logoutAll };
+  /** POST /auth/verify-email: the token from the emailed link (FR-A2). */
+  async function verifyEmail(req, res) {
+    if (await emailVerification.verify(req.body.token, auditContext(req))) {
+      return res.status(200).json({ message: 'Email address confirmed. You can now sign in.' });
+    }
+    return res.status(400).json({ error: 'This link is invalid or has expired. Sign in to get a new one.' });
+  }
+
+  return { register, login, verifySecondFactor, verifyTotpOrBackup, resendOtp, logout, logoutAll, verifyEmail };
 }
 
 module.exports = {

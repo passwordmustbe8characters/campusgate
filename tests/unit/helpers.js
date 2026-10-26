@@ -16,6 +16,7 @@ const TEST_ENV = {
   AUDIT_HMAC_KEY: Buffer.alloc(32, 3).toString('base64url'),
   JWT_SECRET: Buffer.alloc(32, 4).toString('base64url'),
   OTP_DELIVERY_DRIVER: 'console',
+  RISK_SCORING: 'false',
 };
 
 const healthyDb = () => ({ raw: async () => ({ rows: [{ '?column?': 1 }] }) });

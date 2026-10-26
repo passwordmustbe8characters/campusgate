@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, userRow, REGISTERED, FREE,
+  connectDb, connectRedis, buildRealApp, resetAndSeed, csrfAgent, userRow, captureDelivery, REGISTERED, FREE,
 } = require('./helpers');
 const { REGISTRATION_REJECTED } = require('../../app/src/controllers/authController');
 const { createHasher } = require('../../app/src/services/passwordHasher');
@@ -53,9 +53,15 @@ describe('registration (FR-A1, FR-A3, FR-A4) against real PostgreSQL', () => {
     await expect(createHasher(4).compare(GOOD_PASSWORD, row.password_hash)).resolves.toBe(true);
   });
 
-  test('after registering, the student can log in with matric number or email', async () => {
-    const { post } = await csrfAgent(app);
+  test('after registering and opening the emailed link (FR-A2), the student can log in with matric number or email', async () => {
+    const delivery = captureDelivery();
+    const local = buildRealApp({ db, redis, delivery });
+    const { post } = await csrfAgent(local);
+    await redis.flushdb();
     await post('/auth/register', { matricNo: FREE[0].matric_no, email: 'me@example.com', password: GOOD_PASSWORD, consent: true });
+    await local.get('background').idle();
+    const token = /#token=([A-Za-z0-9_-]{43})/.exec(delivery.sent.find((m) => /Confirm/.test(m.subject)).text)[1];
+    expect((await post('/auth/verify-email', { token })).status).toBe(200);
 
     expect((await post('/auth/login', { identifier: FREE[0].matric_no, password: GOOD_PASSWORD })).status).toBe(200);
     expect((await post('/auth/login', { identifier: 'ME@example.com', password: GOOD_PASSWORD })).status).toBe(200);

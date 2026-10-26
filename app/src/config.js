@@ -167,6 +167,9 @@ function loadConfig(env = process.env) {
     queuePassTtlSec: intInRange(env, 'QUEUE_PASS_TTL_SEC', 120, 10, 3600, errors),
     // A queued ticket whose page stops polling is dropped after this long.
     queueTicketTimeoutSec: intInRange(env, 'QUEUE_TICKET_TIMEOUT_SEC', 30, 5, 600, errors),
+
+    // --- Phase 7: risk score at sign-in (FR-A11). On by default. ---
+    riskScoring: bool(env, 'RISK_SCORING', true, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {

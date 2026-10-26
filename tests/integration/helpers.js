@@ -217,6 +217,8 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     // Most tests sign in many times from 127.0.0.1; rateLimit.test.js sets real limits.
     RATE_LIMIT_IP_PER_MIN: '1000000',
     RATE_LIMIT_ACCOUNT_PER_MIN: '1000000',
+    // The risk score depends on the time of day; riskScore.test.js turns it on with a fixed clock.
+    RISK_SCORING: 'false',
     ...env,
   });
   const app = createApp({

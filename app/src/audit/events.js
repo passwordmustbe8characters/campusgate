@@ -19,9 +19,11 @@ const EVENT_TYPES = Object.freeze({
   // Accounts and sign-in (fail open)
   register: { details: ['reason'] },
   login_success: { details: ['method'] },
-  login_failure: { details: ['reason', 'stage', 'method', 'failedAttempts'] },
+  login_failure: { details: ['reason', 'stage', 'method', 'failedAttempts', 'riskScore', 'signals'] },
   lockout: { details: ['failedAttempts', 'lockedUntil', 'stage'] },
-  second_factor_required: { details: ['method'] },
+  second_factor_required: { details: ['method', 'reason', 'riskScore', 'signals'] },
+  email_verified: { details: [] },
+  new_device_alert: { details: [] },
   admin_enrolment_required: { details: [] },
   // One-time codes (fail open)
   otp_sent: { details: ['purpose', 'channel'] },

@@ -21,7 +21,7 @@ const REJECTED = Object.freeze({ ok: false, kind: 'rejected' });
  *
  * ctx = { log, ip, userAgent } (see auditContext); audit events here fail open.
  */
-function createAuthService({ db, hasher, logger, audit }) {
+function createAuthService({ db, hasher, logger, audit, risk }) {
   const roleIds = new Map();
 
   async function roleId(name) {
@@ -89,6 +89,7 @@ function createAuthService({ db, hasher, logger, audit }) {
         'users.is_active',
         'users.two_factor_enabled',
         'users.two_factor_method',
+        'users.email_verified',
         'roles.name as role',
         // Compare against the DB clock so app/DB clock skew cannot matter.
         db.raw('(users.locked_until IS NOT NULL AND users.locked_until > now()) AS is_locked'),
@@ -131,6 +132,13 @@ function createAuthService({ db, hasher, logger, audit }) {
     }
 
     const summary = { id: user.id, role: user.role, method: user.two_factor_method };
+    // FR-A2: a new account must confirm its email first. Told only after a correct
+    // password, so it reveals nothing to someone guessing; never counted as a failure.
+    if (!user.email_verified) {
+      log.info({ event: 'login_failure', reason: 'email_unverified', userId: user.id }, 'email not verified');
+      await audit.record('login_failure', { userId: user.id, success: false, details: { reason: 'email_unverified', stage: 'password' } }, ctx);
+      return { ok: false, reason: 'email_unverified', policy, user: summary };
+    }
     // FR-A13: an admin without TOTP cannot sign in; they may only enrol TOTP.
     if (user.role === 'admin' && !(user.two_factor_enabled && user.two_factor_method === 'totp')) {
       log.info({ event: 'admin_totp_enrolment_required', userId: user.id }, 'admin must enrol TOTP');
@@ -141,6 +149,23 @@ function createAuthService({ db, hasher, logger, audit }) {
       log.info({ event: 'password_ok_second_factor_pending', userId: user.id, method: user.two_factor_method }, 'second factor required');
       await audit.record('second_factor_required', { userId: user.id, success: true, details: { method: user.two_factor_method } }, ctx);
       return { ok: true, status: 'second_factor_required', user: summary };
+    }
+
+    // FR-A11: risk score for password-only accounts (2FA accounts already give a second factor).
+    if (risk) {
+      const r = await risk.assess(user.id, ctx);
+      const details = { riskScore: r.score, signals: r.signals.join(',') || 'none' };
+      if (r.decision === 'block') {
+        // Same generic failure as a wrong password; NOT counted (the password was right).
+        log.warn({ event: 'login_failure', reason: 'risk_blocked', userId: user.id, ...details }, 'sign-in refused by risk score');
+        await audit.record('login_failure', { userId: user.id, success: false, details: { reason: 'risk_blocked', stage: 'risk', ...details } }, ctx);
+        return { ok: false, reason: 'risk_blocked', policy };
+      }
+      if (r.decision === 'step_up') {
+        log.info({ event: 'password_ok_risk_step_up', userId: user.id, ...details }, 'risky sign-in: emailed code required');
+        await audit.record('second_factor_required', { userId: user.id, success: true, details: { method: 'email', reason: 'risk', ...details } }, ctx);
+        return { ok: true, status: 'second_factor_required', user: { ...summary, method: 'email', stepUp: 'risk' } };
+      }
     }
 
     await completeLogin(db, user.id);

@@ -39,7 +39,8 @@ function createSecondFactorService({ db, preauthTickets, otp, verifiers = {}, ma
 
   /** Issue the ticket and, for email 2FA, send the first code. Delivery problems do not fail the login. */
   async function start(user, ctx = { log: logger }) {
-    const ticket = await preauthTickets.issue({ userId: user.id, method: user.method });
+    // stepUp 'risk' (FR-A11): an emailed code for a risky sign-in on an account without 2FA.
+    const ticket = await preauthTickets.issue({ userId: user.id, method: user.method, ...(user.stepUp ? { stepUp: user.stepUp } : {}) });
     const result = { ticket, method: user.method, codeSent: false };
     if (user.method !== 'email') return result;
 
@@ -68,7 +69,8 @@ function createSecondFactorService({ db, preauthTickets, otp, verifiers = {}, ma
     if (!methodAllowed(data.method, method)) return { reason: 'method_not_allowed', userId: data.userId };
     if ((await preauthTickets.attempt(ticket, maxAttempts)) < 0) return { reason: 'ticket_attempts_used', userId: data.userId };
     const account = await loadAccount(db, Number(data.userId));
-    if (!account || !account.is_active || account.is_locked || !account.two_factor_enabled) {
+    const secondFactorExpected = account && (account.two_factor_enabled || (data.stepUp === 'risk' && data.method === 'email'));
+    if (!account || !account.is_active || account.is_locked || !secondFactorExpected) {
       await preauthTickets.consume(ticket);
       return { reason: !account || !account.is_active ? 'inactive' : account.is_locked ? 'locked' : 'two_factor_off', userId: data.userId };
     }

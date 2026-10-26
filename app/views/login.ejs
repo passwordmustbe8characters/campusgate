@@ -1,7 +1,13 @@
 <%- include('partials/top', { title, csrfToken }) %>
     <h1>Sign in</h1>
     <% if (registered) { %>
-      <p class="msg msg-ok">Account created. You can now sign in.</p>
+      <p class="msg msg-ok">Account created. Open the link we emailed you to confirm your address, then sign in.</p>
+    <% } %>
+    <% if (locals.flags && locals.flags.verified) { %>
+      <p class="msg msg-ok">Email address confirmed. You can now sign in.</p>
+    <% } %>
+    <% if (locals.flags && locals.flags.admitted) { %>
+      <p class="msg msg-ok">It's your turn: sign in now.</p>
     <% } %>
     <form data-api="/auth/login" novalidate>
       <label for="identifier">Matric/staff ID or email</label>
