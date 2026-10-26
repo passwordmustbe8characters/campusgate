@@ -13,7 +13,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 4 | Sessions, token, mock portal | Done 2026-10-26 (LITE scope; branch `phase4-lite`, merged after the final full run) |
 | 5 | Peak-load core | Done 2026-10-26 (branch `phase5`; policy caching moved to Phase 8) |
 | 6 | Admin console | Done 2026-10-26 (branch `phase6`) |
-| 7 | P1 features | Not started |
+| 7 | P1 features | Done 2026-10-27 (branch `phase7`) |
 | 8 | Load, clustering, measurement | Not started |
 | 9 | Hardening and documentation | Not started |
 | 10 | FreeRADIUS | Not started |
@@ -54,7 +54,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | ~~5~~ | ~~Per-IP and per-account rate limits on the sign-in and recovery endpoints.~~ **Done in Phase 5.** |
 | 5, 8 | **Email delivery in the request path** (sign-in OTP is sent inside `POST /auth/login`) is a peak-load concern: a slow SMTP server slows logins. Revisit (queue, or send after responding) and measure. |
 | ~~6~~ | **Done in Phase 6.** Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service; a 2FA reset button calling `resetTwoFactor`; dashboard counters from `cg:metrics:*` in Redis. |
-| 7 | Enforce email verification (FR-A2); `users.email_verified` already exists and is `false` for new sign-ups. |
+| ~~7~~ | ~~Enforce email verification (FR-A2).~~ **Done in Phase 7.** |
 | 8 | `calibrate` must include the **OTP step time** (send + verify) as well as bcrypt and DB time. |
 | 9 | Check the registration privacy notice wording against the Nigeria Data Protection Act 2023 (NFR-5), **including the Phase 3 sentence that full IP addresses are kept in the tamper-evident security log**. |
 | Future | Staff-specific services (staff currently get the same three portal services as students). |
@@ -1079,3 +1079,52 @@ Decisions approved by the developer: average sign-in time measured on the server
 - The users page with a locked account, before and after unlock.
 - The policy editor and its history.
 - Verify integrity OK, and BROKEN after a direct database edit (Phase 3 tamper steps).
+---
+
+## Phase 7: Additional features (2026-10-27)
+
+| Sub-step | Commit | What |
+|---|---|---|
+| 7.1 | `d15b36f` | Email verification, risk score, new-device alert; Gmail-ready Docker setting |
+| 7.2 | `0bc6abc` | Concurrent-session limit; step-up code before the mock fees payment |
+| 7.3 | `5c09d56` | Access windows, guest vouchers, their admin screens, suspicious-activity panel |
+| 7.4 | (this commit) | Docs |
+
+Decisions approved by the developer: new accounts must click the emailed link; risk score 2–3 asks for an emailed code, 4 refuses; the 4th sign-in ends the oldest session; guest vouchers kept; access windows with a daily catch-up period. The fees "payment" is a simulation only (no money, no bank details); it exists to demonstrate step-up authentication.
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-A2 | Done | New accounts get an emailed link (token after `#`, HMAC-stored, 24 h, single use, newer link cancels older). Signing in before confirming is refused **only after a correct password** (so it reveals nothing), re-sends the link (60 s cooldown) and is never counted. Seeded demo accounts count as verified. |
+| FR-A11 | Done | Risk score after a correct password, 1 point each: new IP, new device (both only if the account has sign-ins in the last 30 days), 00:00–05:00 Lagos, 3+ failures in 15 min. 2–3 → emailed code even without 2FA; 4 → same generic refusal as a wrong password, **not counted**. `RISK_SCORING=true` by default. |
+| FR-A12 | Done | Email after a completed sign-in from a browser not seen on the account in 30 days (device, IP, Lagos time); none on the very first sign-in; sent in the background. |
+| FR-Z2 | Done | Access windows per service, optional level, faculty and date, Lagos times. In your window → open; before it → a page says when it opens; after the day's last window → open to everyone (catch-up); no windows → open. **Sign-in is never blocked.** Level and faculty are in the session token and the windows are in memory, so the check needs no database read. |
+| FR-Z3 | Done | `policies.max_sessions` (default 3): a new sign-in ends the oldest live sessions (audited as `session_limit`). |
+| FR-Z4 | Done | Admin creates a one-time code (shown once, HMAC-stored) for chosen services and hours. Each voucher has its own guest account that can never sign in with a password. `/voucher` redeems it once for a short session limited to those services; cancelling ends a guest session in use; redemption is rate limited. |
+| FR-M3 | Done | "Pay (demo)" on an invoice needs a fresh emailed code (5 min, 3 attempts, 60 s resend cooldown) before it is marked paid. |
+| FR-D4 | Done | `/admin/windows` and `/admin/vouchers`. |
+| FR-D5 | Done | `/admin/suspicious`: accounts with 3+ failures in the last hour, addresses with 5+ failures and how many accounts they tried, lockouts in 24 h, risk refusals and step-ups. |
+
+### Email: Gmail
+The app sends mail over SMTP, so Gmail works with configuration only (tested 2026-10-27: Gmail accepted a test message). In `.env`: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_SECURE=true`, `SMTP_USER`, `SMTP_PASS` (a 16-character Google App Password), `MAIL_FROM=CampusGate <address>`. The Docker app uses Mailpit unless `DOCKER_SMTP_HOST=smtp.gmail.com` and `DOCKER_SMTP_PORT=465` are also set. Automated tests and load tests always use Mailpit (free Gmail allows about 500 messages a day; seeded students have made-up addresses).
+
+### New audit events
+`email_verified`, `new_device_alert`, `voucher_redeemed` (fail open); `window_changed`, `voucher_created`, `voucher_revoked` (fail closed). `login_failure` and `second_factor_required` may carry `riskScore` and `signals`.
+
+### Tests
+| File | What it proves |
+|---|---|
+| `phase7Signin.test.js` (new) | Verification link (hash only, 24 h), unverified sign-in refused only after the right password, link re-sent, nothing counted; single use, older links cancelled, expiry; risk service scoring incl. no-history rule; medium risk asks for an emailed code that works (2FA stays off); high risk refused generically and not counted; new-device email (not on first sign-in or same device), failed email does not affect sign-in |
+| `phase7Sessions.test.js` (new) | 4th sign-in ends the oldest of 3; `max_sessions=1`; other users untouched; payment step-up: fresh code required, paid once, wrong codes (3 attempts) leave it unpaid, other users' invoices / no session / no CSRF refused, resend cooldown |
+| `phase7Access.test.js` (new) | Window rule (in window, before, missed → catch-up, faculty, dated); portal page explains when it opens while other services work; admin add/remove applies at once and is audited; bad windows refused; voucher created (hash only), redeemed once for only its services, guest cannot password-sign-in, expired/cancelled refused and cancelling ends the session, validation and rate limit; suspicious panel |
+| Updated | `register`, `system` (verify before sign-in), `portal` (windows preloaded like permissions), `migrations`, `sessionRoutes` (unit) |
+
+**Results:** 7.1: phase7Signin and every integration suite 239/239 (the name filter matched all suites); 7.2: 40/40 with related suites; 7.3: phase7Access 12/12 plus portal, sessions, sessionFlow, adminConsole, waitingRoom, phase7Signin, phase7Sessions, migrations, auditLog; unit 135/135. Failures seen along the way were list updates in tests (new tables, new admin routes).
+
+### Demo by hand
+1. Register a test student with your own email (Gmail settings on): open the link, then sign in.
+2. Sign in from a second browser: the new-device email arrives.
+3. Admin → Access windows: add "fees, 200 level, now+1h to now+2h". A 200-level student sees "opens at …"; Hostel still works.
+4. Admin → Vouchers: create one for Hostel, 2 hours; open `/voucher` in a private window and enter it.
+5. Fees → Generate invoice → Pay (demo): enter the emailed code.
+6. Five wrong passwords on one account → Admin → Suspicious activity.
