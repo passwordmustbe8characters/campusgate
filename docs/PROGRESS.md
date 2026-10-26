@@ -11,7 +11,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 2 | Second factors and recovery | Done 2026-10-17 (FR-A10 and FR-A13 PARTIAL until Phases 4 and 6) |
 | 3 | Authorization and audit logs | Done 2026-10-24 (sync audit mode; FR-Z1, L3, L4 PARTIAL until Phases 4 and 6; queue mode = future work) |
 | 4 | Sessions, token, mock portal | Done 2026-10-26 (LITE scope; branch `phase4-lite`, merged after the final full run) |
-| 5 | Peak-load core | Not started |
+| 5 | Peak-load core | Done 2026-10-26 (branch `phase5`; policy caching moved to Phase 8) |
 | 6 | Admin console | Not started |
 | 7 | P1 features | Not started |
 | 8 | Load, clustering, measurement | Not started |
@@ -49,9 +49,9 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | ~~4~~ | ~~FR-A10 / reset: revoke the user's **sessions** after a password reset or change.~~ **Done in Phase 4.** |
 | 9 | CSRF tokens stay bound to the pre-session cookie (not the JWT `jti`); see the Phase 4 decision. Revisit with HTTPS in Phase 9. |
 | 3/4/6 | Put `requireAdmin2FA` (`app/src/middleware/requireAdmin2FA.js`) in front of every `/admin/*` route (FR-A13). |
-| 5 | Cache the `policies` row (per process or in Redis) **with invalidation on change**, instead of reading it from PostgreSQL on every login/registration. Measure before and after. |
-| 5 | Front-end exponential backoff on 429/503 in `app/public/js/forms.js`. |
-| 5 | Per-IP and per-account rate limits on `/auth/login`, `/auth/otp`, `/auth/totp/verify`, `/auth/otp/resend`, `/auth/password/forgot`, `/auth/password/reset`. Today only per-account cooldowns (OTP resend, reset email) and per-ticket / per-code attempt limits exist. |
+| 8 | Cache the `policies` row **with invalidation on change** (moved from Phase 5): measure the per-request read in `calibrate` first; cache only if it matters. Tests change the row directly in the database, so a cache needs cross-process invalidation. |
+| ~~5~~ | ~~Front-end exponential backoff on 429/503.~~ **Done in Phase 5.** |
+| ~~5~~ | ~~Per-IP and per-account rate limits on the sign-in and recovery endpoints.~~ **Done in Phase 5.** |
 | 5, 8 | **Email delivery in the request path** (sign-in OTP is sent inside `POST /auth/login`) is a peak-load concern: a slow SMTP server slows logins. Revisit (queue, or send after responding) and measure. |
 | 6 | Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service; a 2FA reset button calling `resetTwoFactor`; dashboard counters from `cg:metrics:*` in Redis. |
 | 7 | Enforce email verification (FR-A2); `users.email_verified` already exists and is `false` for new sign-ups. |
@@ -962,3 +962,70 @@ Generate with `node -e "console.log(require('crypto').randomBytes(32).toString('
 - `sessions` rows with `revoke_reason` (`logout`, `logout_all`, `password_changed`).
 - The 503 page with Redis stopped.
 - Test summaries above.
+---
+
+## Phase 5: Peak-load core (2026-10-26)
+
+| Sub-step | Commit | What |
+|---|---|---|
+| 5.1 | `f455579` | Rate limiting per IP and per account; `policies.queue_enabled` |
+| 5.2 | `34fcafd` | Waiting room (admission control), `/waiting` page, front-end backoff |
+| 5.3 | (this commit) | Docs |
+
+Decisions approved by the developer: own Redis rate limiter (no new packages); 300/min per IP and 10/min per account; a `queue_enabled` switch for baseline-vs-proposed measurements; polling, not SSE. **Policy caching was moved to Phase 8**: tests (and admins) change the policy row directly, so a cache needs cross-process invalidation; we measure the cost of the read first.
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-P2 | Done | Waiting room with signed ticket, position, estimated wait, polling every 3 s; FIFO admission in batches; a ticket expires when its page stops polling. |
+| FR-P3 | Done (CLI) | Capacity, batch size and interval from `policies` (live, no restart); staff and admin bypass. The admin console editor is Phase 6. |
+| FR-P4 | Done | Rate limits per IP and per account with `Retry-After`; the front end waits and retries with doubling backoff on 429/503. |
+| FR-P5 | Still done | A rate-limited or queued request never reaches the credential check, so it can never count toward lockout (tested). |
+
+### Rate limiting
+- Fixed 60-second window per key, counted atomically in Redis (Lua `INCR` + `PEXPIRE`), so it is shared by every app process.
+- Routes: login (IP + account), register (IP + account), forgot password (IP + account), reset password (IP), second-factor steps (IP; each pre-auth ticket and code also has its own attempt limit).
+- **Defaults:** `RATE_LIMIT_IP_PER_MIN=300` (generous, because a whole campus can share one public IP behind NAT), `RATE_LIMIT_ACCOUNT_PER_MIN=10`. Lockout still stops password guessing.
+- The account key is a keyed hash of the normalized identifier (case and spaces ignored); Redis never holds the typed ID or email.
+- **Redis down: fail open** (request allowed, warning logged). Lockout still applies. The alternative would stop every sign-in during a Redis outage.
+
+### Waiting room
+- **"Sign-ins in progress"** = live admission passes (`cg:wr:active`). `POST /auth/login` needs a pass when `queue_enabled` is true:
+  - a pass already held (cookie `cg.admit`, signed), or
+  - one taken at once if there is room **and nobody is waiting** (no queue-jumping), or
+  - none, for staff and admin (looked up only when the system is full).
+  - Otherwise: **503** `{ queued: true, redirect: "/waiting" }` with `Retry-After` = the interval.
+- **Queue:** `/waiting` takes a signed ticket (cookie `cg.wr`) and polls `/queue/status` every 3 s for position and estimated wait (= whole batches ahead × interval).
+- **Admitter:** every app process ticks each second; the one that wins the interval slot (`SET cg:wr:tick NX PX interval`) admits up to `queue_batch` tickets from the head of the queue, within capacity. With several processes, exactly one batch per interval.
+- **Expiry:** a ticket not polled for 30 s (`QUEUE_TICKET_TIMEOUT_SEC`) is dropped and the others move up; an admitted place not claimed within 30 s is given back; a pass ends when the sign-in completes or after 120 s (`QUEUE_PASS_TTL_SEC`).
+- **Redis down: fail open** (sign-in allowed, logged): the waiting room cannot work without Redis, and stopping all sign-ins would be worse. Protected pages still fail closed (Phase 4).
+- **Baseline vs. proposed:** `npm run admin -- policy set queue_enabled=false --confirm` turns admission control off without a restart (used for the Phase 8 comparison).
+- **Known trade-off:** when the system is full, the response for a staff/admin ID differs from a student ID (staff skip the queue), which reveals that an ID belongs to staff. Only while the system is full, and staff IDs are not secret; accepted.
+
+### Tests
+| File | What it proves |
+|---|---|
+| `rateLimit.test.js` (new) | 4th attempt per account → 429 + Retry-After and **not counted toward lockout**; account limit follows the account however it is typed; per-IP flood across many accounts limited; only keyed hashes in Redis; register / forgot / second-factor limited; window reset; **Redis down = fail open** |
+| `waitingRoom.test.js` (new) | Passes until capacity, then queue; **FIFO admission in batches within capacity**; **no queue-jumping**; **ticket expiry when polling stops**; unclaimed admission given back; pass expiry; forged or wrong-key tickets refused; ETA formula; only random ids in Redis; through the app: queued 503 with Retry-After and nothing counted; a completed sign-in frees its place; full flow join → position → admitted → sign in; staff/admin bypass; `queue_enabled=false` never queues; capacity change applies live; **Redis down = fail open** |
+
+**Results:** 5.1: rateLimit + login + lockout + migrations 33/33; 5.2: waitingRoom + login + lockout + emailOtp + sessionFlow 58/58; unit 134/134 each time. (Developer's rule from 2026-10-26: touched suites per sub-step, ONE full run at the end of all phases.) Two test-side mistakes in the first waiting-room run were fixed (a fake clock let a ticket go stale; a cookie helper read the first of two `Set-Cookie` headers); no code changes were needed.
+
+### Optional `.env` lines (defaults shown)
+```
+RATE_LIMIT_IP_PER_MIN=300
+RATE_LIMIT_ACCOUNT_PER_MIN=10
+QUEUE_PASS_TTL_SEC=120
+QUEUE_TICKET_TIMEOUT_SEC=30
+```
+
+### Demo by hand
+1. Make the room tiny: `docker compose exec app npm run admin -- policy set queue_capacity=1 queue_batch=1 queue_interval_sec=10 --confirm`.
+2. Browser A: enter a seeded student ID with a wrong password (takes the only place and keeps it).
+3. Browser B (another student): sign in → sent to the **waiting room**, position 1, estimated wait 10 s. Within ~2 minutes (A's pass expires) B is admitted and taken to sign-in.
+4. `policy set queue_enabled=false --confirm`: B signs in at once (baseline mode). Set it back to `true` and the defaults (`queue_capacity=200 queue_batch=50 queue_interval_sec=5`) afterwards.
+5. Rate limit: 11 quick sign-ins for one ID → "Too many attempts. Please wait N s"; the page retries by itself.
+
+### Evidence to capture for the report
+- The waiting-room page with position and estimated wait.
+- The 429 message and the automatic retry.
+- `redis-cli ZCARD cg:wr:queue` / `ZCARD cg:wr:active` during the demo.
