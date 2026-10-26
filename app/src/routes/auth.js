@@ -62,11 +62,6 @@ const sixDigitCode = (name = 'code') =>
     .trim()
     .matches(/^\d{6}$/).withMessage('Enter the 6-digit code.');
 
-/**
- * @param controller          auth controller (login, second factor)
- * @param settings            security-settings controller (account ticket only)
- * @param requireAccount      the ONE middleware that accepts the interim account ticket
- */
 const forgotRules = [
   body('email')
     .isString().withMessage('Enter your email address.')
@@ -84,8 +79,17 @@ const resetRules = [
 
 const changeRules = [passwordField('currentPassword'), passwordField('newPassword')];
 
-function authRouter({ controller, settings, passwords, requireAccount, requireAccountOrEnrolment }) {
+/**
+ * @param controller                  auth controller (login, second factor, sign-out)
+ * @param settings                    security-settings controller
+ * @param requireSignedIn             session check (full sign-in only)
+ * @param requireSignedInOrEnrolment  session check that also admits an enrolment-only session (ENROLMENT_ROUTES)
+ * @param recent                      sign-in must be recent: security changes only
+ */
+function authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent }) {
   const router = express.Router();
+  const requireAccount = [requireSignedIn, recent];
+  const requireAccountOrEnrolment = [requireSignedInOrEnrolment, recent];
   router.post('/auth/register', registerRules, validate, controller.register);
   router.post('/auth/login', loginRules, validate, controller.login);
 
@@ -102,10 +106,14 @@ function authRouter({ controller, settings, passwords, requireAccount, requireAc
     controller.verifyTotpOrBackup,
   );
 
-  // Security settings: interim account ticket required (see ACCOUNT_TICKET_ROUTES).
+  // Sign-out (FR-P6). An enrolment-only session may sign out too.
+  router.post('/auth/logout', requireSignedInOrEnrolment, controller.logout);
+  router.post('/auth/logout-all', requireSignedIn, controller.logoutAll);
+
+  // Security settings: session plus a sign-in in the last 10 minutes.
   router.post('/auth/2fa/email/enable', requireAccount, settings.startEmail2fa);
   router.post('/auth/2fa/email/confirm', requireAccount, sixDigitCode(), validate, settings.confirmEmail2fa);
-  // TOTP enrolment also accepts the enrolment-only ticket (admin without TOTP, FR-A13).
+  // TOTP enrolment also accepts the enrolment-only session (admin without TOTP, FR-A13).
   router.post('/auth/totp/enrol', requireAccountOrEnrolment, settings.startTotp);
   router.post('/auth/totp/enrol/confirm', requireAccountOrEnrolment, sixDigitCode(), validate, settings.confirmTotp);
   router.post('/auth/password/change', requireAccount, changeRules, validate, passwords.change);

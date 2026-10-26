@@ -12,8 +12,8 @@ const {
   enableEmail2fa, trackForTeardown, holdOnlyConnection, cliEnv, TEST_KEYS, REGISTERED, PASSWORDS,
 } = require('./helpers');
 const { testUrls } = require('./testEnv');
-const { createTicketStore } = require('../../app/src/services/tickets');
-const { ticketCookies, requireAccountTicket } = require('../../app/src/middleware/tickets');
+const { createSessionService } = require('../../app/src/services/sessions');
+const { sessionCookies, requireSession } = require('../../app/src/middleware/session');
 const { requireAdmin2FA } = require('../../app/src/middleware/requireAdmin2FA');
 const { createDb } = require('../../app/src/db/knex');
 const { loadConfig } = require('../../app/src/config');
@@ -49,7 +49,7 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     return { ...agent, res };
   };
 
-  /** Admin enrols TOTP through the enrolment-only ticket; returns the secret. */
+  /** Admin enrols TOTP through the enrolment-only session; returns the secret. */
   async function enrolAdmin() {
     const { post, res } = await adminLogin();
     expect(res.body.status).toBe('enrolment_required');
@@ -60,13 +60,13 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     return { secret: start.body.secret, confirm };
   }
 
-  /** Full admin sign-in with TOTP; returns the agent and the account cookie value. */
+  /** Full admin sign-in with TOTP; returns the agent and the session cookie value. */
   async function adminSignedIn(secret) {
     const { post, res, agent } = await adminLogin();
     expect(res.body).toMatchObject({ status: 'second_factor_required', method: 'totp' });
     const ok = await post('/auth/totp/verify', { code: await totpNow(secret, 30) });
     expect(ok.body.status).toBe('signed_in');
-    return { post, agent, ticket: cookieFrom(ok, 'cg.acct') };
+    return { post, agent, ticket: cookieFrom(ok, 'cg.session') };
   }
 
   test('an admin without TOTP cannot sign in: enrolment_required, and the counter is not reset', async () => {
@@ -74,18 +74,19 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     const { res } = await adminLogin();
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('enrolment_required');
-    expect(cookieFrom(res, 'cg.acct')).toBeDefined();
+    expect(cookieFrom(res, 'cg.session')).toBeDefined();
     const row = await userRow(db, ADMIN);
     expect(row.failed_attempts).toBe(2);
     expect(row.last_login).toBeNull();
   });
 
-  test('the enrolment-only ticket opens TOTP enrolment and nothing else', async () => {
+  test('the enrolment-only session opens TOTP enrolment (and sign-out) and nothing else', async () => {
     const { post, agent } = await adminLogin();
     expect((await agent.get('/account/security')).status).toBe(200);
     expect((await post('/auth/totp/enrol')).status).toBe(200);
     expect((await post('/auth/password/change', { currentPassword: PASSWORDS.admin, newPassword: 'New-Admin-Pass-7' })).status).toBe(401);
     expect((await post('/auth/2fa/email/enable')).status).toBe(401);
+    expect((await post('/auth/logout-all')).status).toBe(401);
   });
 
   test('an admin with email 2FA (forced in the DB) is still sent to TOTP enrolment, not email codes', async () => {
@@ -94,11 +95,12 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
     expect(res.body.status).toBe('enrolment_required');
   });
 
-  test('after enrolling, the enrolment ticket is gone; the next sign-in needs the TOTP code', async () => {
+  test('after enrolling, the enrolment session is revoked; the next sign-in needs the TOTP code', async () => {
     const { secret, confirm } = await enrolAdmin();
     expect(confirm.body.backupCodes).toHaveLength(8);
     expect(confirm.body.message).toMatch(/sign in again/);
-    expect(await redis.keys('cg:acct:*')).toHaveLength(0);
+    expect(await db('sessions').where({ scope: 'enrol' }).whereNull('revoked_at')).toHaveLength(0);
+    expect(await db('sessions').where({ scope: 'enrol', revoke_reason: 'enrolment_complete' })).toHaveLength(1);
     expect(await userRow(db, ADMIN)).toMatchObject({ two_factor_enabled: true, two_factor_method: 'totp' });
 
     const { ticket } = await adminSignedIn(secret);
@@ -118,14 +120,16 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
       const config = loadConfig({
         NODE_ENV: 'test', DATABASE_URL: 'postgres://x', REDIS_URL: 'redis://x', CSRF_SECRET: 'x'.repeat(32),
         TOKEN_HMAC_KEY: TEST_KEYS.tokenHmacKey, TOTP_ENC_KEY: TEST_KEYS.totpEncKey, AUDIT_HMAC_KEY: TEST_KEYS.auditHmacKey,
+        JWT_SECRET: TEST_KEYS.jwtSecret,
       });
-      const accountTickets = createTicketStore({ redis, hmacKey: config.tokenHmacKey, kind: 'acct', ttlSec: 600 });
+      const sessions = createSessionService({ db, redis, jwtSecret: config.jwtSecret });
       const app = express();
       app.use(cookieParser());
-      app.get('/admin-probe', requireAccountTicket({ accountTickets, cookies: ticketCookies(config) }), requireAdmin2FA({ db }),
+      app.use((req, res, next) => { req.log = { info() {}, error() {} }; next(); });
+      app.get('/admin-probe', requireSession({ sessions, cookies: sessionCookies(config) }), requireAdmin2FA({ db }),
         (req, res) => res.json({ ok: true }));
       const req = request(await listen(app)).get('/admin-probe');
-      return ticket ? req.set('Cookie', `cg.acct=${ticket}`) : req;
+      return ticket ? req.set('Cookie', `cg.session=${ticket}`) : req;
     }
 
     test('admin with TOTP passes', async () => {
@@ -134,10 +138,10 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
       expect((await probe(ticket)).status).toBe(200);
     });
 
-    test('a student with a valid ticket is refused (403)', async () => {
+    test('a student with a valid session is refused (403)', async () => {
       const agent = await csrfAgent(buildRealApp({ db, redis, clock }));
       const res = await agent.post('/auth/login', { identifier: REGISTERED[0].matric_no, password: PASSWORDS.student });
-      expect((await probe(cookieFrom(res, 'cg.acct'))).status).toBe(403);
+      expect((await probe(cookieFrom(res, 'cg.session'))).status).toBe(403);
     });
 
     test('an admin whose TOTP was removed after sign-in is refused (403, enrolment required)', async () => {
@@ -150,9 +154,9 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
       expect(res.body.enrolmentRequired).toBe(true);
     });
 
-    test('the enrolment-only ticket is refused, and no ticket means sign in again (GET redirects to /login)', async () => {
+    test('the enrolment-only session is refused, and no session means sign in again (GET redirects to /login)', async () => {
       const { res } = await adminLogin();
-      for (const ticket of [cookieFrom(res, 'cg.acct'), undefined]) {
+      for (const ticket of [cookieFrom(res, 'cg.session'), undefined]) {
         const probed = await probe(ticket);
         expect(probed.status).toBe(302);
         expect(probed.headers.location).toBe('/login');
@@ -173,14 +177,20 @@ describe('admin 2FA (FR-A13), reset-2fa CLI, knex logging', () => {
       expect(secret).toBeDefined();
     });
 
-    test('clears secret, backup codes and flag; revokes tickets; the admin must re-enrol at next sign-in', async () => {
+    test('clears secret, backup codes and flag; revokes tickets and sessions; the admin must re-enrol at next sign-in', async () => {
       const { secret } = await enrolAdmin();
+      const signedIn = await adminSignedIn(secret); // a live session
       const { post } = await adminLogin(); // pending pre-auth ticket
       expect((await redis.keys('cg:preauth:*')).length).toBeGreaterThan(0);
+      expect((await signedIn.agent.get('/account/security')).status).toBe(200);
 
       const { stdout } = await cli('reset-2fa', ADMIN, '--confirm');
       expect(stdout).toContain(`Two-step sign-in reset for ${ADMIN}`);
       expect(stdout).toContain('backup codes removed: 8');
+      expect(stdout).toMatch(/1 session\(s\) and \d+ pending sign-in\(s\) revoked/);
+      expect((await signedIn.agent.get('/account/security')).status).toBe(302);
+      const audit = await db('auth_logs').where({ event_type: 'sessions_revoked' }).first();
+      expect(audit.details).toEqual({ reason: 'two_factor_reset', count: 1, actor: 'cli' });
 
       const row = await userRow(db, ADMIN);
       expect(row).toMatchObject({ two_factor_enabled: false, two_factor_method: null, totp_secret_enc: null, totp_last_step: null });

@@ -14,26 +14,33 @@ const loginFailedMessage = (policy) =>
 const RESTART_MESSAGE = 'Your sign-in has expired. Please sign in again.';
 const INVALID_CODE_MESSAGE = 'Invalid or expired code.';
 
+// An enrolment-only session (admin without TOTP) is short whatever the policy says.
+const ENROLMENT_SESSION_MAX_MIN = 10;
+
 /**
- * Full sign-in completed. Phase 2 issues only the interim account ticket
- * (security settings only). TODO(Phase 4): issue the JWT session here instead.
- *
- * The ticket lives in Redis. If Redis is down, a password-only sign-in still
- * succeeds (Phase 1 behaviour); only the security-settings page is unavailable.
- * 2FA sign-in cannot get this far without Redis (the pre-auth ticket is there).
+ * Start a login-once session (FR-P1): signed token in an HttpOnly cookie, plus
+ * a `sessions` record. Lifetime = policies.session_timeout_min, read now, so a
+ * policy change applies to the next sign-in without a restart.
  */
-async function signIn(req, res, user, { accountTickets, cookies }) {
+async function startSession(req, res, user, scope, { sessions, cookies, getPolicy }) {
+  const policy = await getPolicy();
+  const ttlMin = scope === 'enrol'
+    ? Math.min(policy.session_timeout_min, ENROLMENT_SESSION_MAX_MIN)
+    : policy.session_timeout_min;
+  const session = await sessions.issue({
+    userId: user.id, role: user.role, scope, ttlMin, ip: req.ip, userAgent: req.get('user-agent'),
+  });
   cookies.clearPreauth(res);
-  try {
-    cookies.setAccount(res, await accountTickets.issue({ userId: user.id, role: user.role, scope: 'full' }));
-  } catch (err) {
-    req.log.warn({ event: 'account_ticket_unavailable', userId: user.id, err }, 'signed in without account ticket');
-  }
-  return res.status(200).json({ status: 'signed_in', message: 'Signed in.', role: user.role });
+  cookies.setSession(res, session);
 }
 
-function createAuthController({ authService, secondFactor, accountTickets, cookies }) {
-  const ticketDeps = { accountTickets, cookies };
+function createAuthController({ authService, secondFactor, sessions, cookies, getPolicy, audit }) {
+  const sessionDeps = { sessions, cookies, getPolicy };
+
+  async function signIn(req, res, user) {
+    await startSession(req, res, user, 'full', sessionDeps);
+    return res.status(200).json({ status: 'signed_in', message: 'Signed in.', role: user.role });
+  }
 
   async function register(req, res) {
     const { matricNo, email, password } = req.body;
@@ -55,11 +62,11 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
     if (!result.ok) {
       return res.status(401).json({ error: loginFailedMessage(result.policy) });
     }
-    if (result.status === 'signed_in') return signIn(req, res, result.user, ticketDeps);
+    if (result.status === 'signed_in') return signIn(req, res, result.user);
 
-    // FR-A13: admin without TOTP gets an enrolment-only ticket (Redis required).
+    // FR-A13: admin without TOTP gets an enrolment-only session.
     if (result.status === 'enrolment_required') {
-      cookies.setAccount(res, await accountTickets.issue({ userId: result.user.id, role: result.user.role, scope: 'enrol' }));
+      await startSession(req, res, result.user, 'enrol', sessionDeps);
       return res.status(200).json({
         status: 'enrolment_required',
         message: 'Administrators must set up an authenticator app before signing in.',
@@ -84,7 +91,7 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
   /** POST /auth/otp, /auth/totp/verify: second step of sign-in. */
   const verifySecondFactor = (method, field) => async (req, res) => {
     const result = await secondFactor.verify(req.cookies[cookies.names.preauth], method, req.body[field], auditContext(req));
-    if (result.status === 'signed_in') return signIn(req, res, result.user, ticketDeps);
+    if (result.status === 'signed_in') return signIn(req, res, result.user);
     if (result.status === 'restart') {
       cookies.clearPreauth(res);
       return res.status(401).json({ error: RESTART_MESSAGE, restart: true });
@@ -107,7 +114,23 @@ function createAuthController({ authService, secondFactor, accountTickets, cooki
     return res.status(200).json({ message: 'We sent a new code to your email.' });
   }
 
-  return { register, login, verifySecondFactor, verifyTotpOrBackup, resendOtp };
+  /** POST /auth/logout: end this session (its token goes on the denylist). */
+  async function logout(req, res) {
+    await sessions.revoke(req.account.jti, 'logout');
+    await audit.record('logout', { userId: req.account.userId, success: true }, auditContext(req));
+    cookies.clearSession(res);
+    return res.status(200).json({ message: 'You have signed out.' });
+  }
+
+  /** POST /auth/logout-all: end every session of this user, on every device. */
+  async function logoutAll(req, res) {
+    const count = await sessions.revokeUser(req.account.userId, 'logout_all');
+    await audit.record('logout_all', { userId: req.account.userId, success: true, details: { count } }, auditContext(req));
+    cookies.clearSession(res);
+    return res.status(200).json({ message: `You have signed out everywhere (${count} session${count === 1 ? '' : 's'} ended).` });
+  }
+
+  return { register, login, verifySecondFactor, verifyTotpOrBackup, resendOtp, logout, logoutAll };
 }
 
 module.exports = {

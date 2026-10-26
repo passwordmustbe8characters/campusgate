@@ -24,6 +24,7 @@ describe('email delivery end to end through real SMTP (Mailpit)', () => {
       TOKEN_HMAC_KEY: Buffer.alloc(32, 1).toString('base64'),
       TOTP_ENC_KEY: Buffer.alloc(32, 2).toString('base64'),
       AUDIT_HMAC_KEY: Buffer.alloc(32, 3).toString('base64'),
+      JWT_SECRET: Buffer.alloc(32, 4).toString('base64'),
       OTP_DELIVERY_DRIVER: 'email',
       SMTP_HOST: '127.0.0.1',
       SMTP_PORT: '1025',

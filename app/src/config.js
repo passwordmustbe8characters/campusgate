@@ -146,13 +146,15 @@ function loadConfig(env = process.env) {
     resetCooldownSec: intInRange(env, 'RESET_COOLDOWN_SEC', 60, 1, 3600, errors),
     preauthTtlSec: intInRange(env, 'PREAUTH_TTL_SEC', 300, 30, 1800, errors),
     preauthMaxAttempts: intInRange(env, 'PREAUTH_MAX_ATTEMPTS', 5, 1, 20, errors),
-    // Interim settings-only ticket (Phase 2); TODO(Phase 4): delete with the JWT session.
-    accountTicketTtlMin: intInRange(env, 'ACCOUNT_TICKET_TTL_MIN', 10, 1, 60, errors),
 
     // --- Phase 3: audit log ---
     // Key for the tamper-evident chain (HMAC). Never stored in the database.
     // Losing or changing it makes existing chains unverifiable.
     auditHmacKey: key(env, 'AUDIT_HMAC_KEY', { minBytes: 32 }, errors),
+
+    // --- Phase 4: login-once session ---
+    // HS256 signing key for session tokens. Changing it signs everyone out.
+    jwtSecret: key(env, 'JWT_SECRET', { minBytes: 32 }, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {
@@ -164,9 +166,9 @@ function loadConfig(env = process.env) {
   if (config.otpDeliveryDriver === 'sms-mock' && nodeEnv === 'production') {
     errors.push('OTP_DELIVERY_DRIVER=sms-mock keeps codes in a plain Redis list and is refused when NODE_ENV=production');
   }
-  const secrets = [env.CSRF_SECRET, env.TOKEN_HMAC_KEY, env.TOTP_ENC_KEY, env.AUDIT_HMAC_KEY].filter(Boolean);
+  const secrets = [env.CSRF_SECRET, env.TOKEN_HMAC_KEY, env.TOTP_ENC_KEY, env.AUDIT_HMAC_KEY, env.JWT_SECRET].filter(Boolean);
   if (new Set(secrets).size !== secrets.length) {
-    errors.push('CSRF_SECRET, TOKEN_HMAC_KEY, TOTP_ENC_KEY and AUDIT_HMAC_KEY must all be different');
+    errors.push('CSRF_SECRET, TOKEN_HMAC_KEY, TOTP_ENC_KEY, AUDIT_HMAC_KEY and JWT_SECRET must all be different');
   }
 
   fail(errors);

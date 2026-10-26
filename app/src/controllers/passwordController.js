@@ -38,8 +38,8 @@ function createPasswordController({ passwordService, cookies }) {
     } catch (err) {
       return respondError(res, err);
     }
-    // All of this user's tickets were revoked, including this one.
-    cookies.clearAccount(res);
+    // All of this user's sessions were revoked (FR-A10), including this one.
+    cookies.clearSession(res);
     return res.status(200).json({ message: 'Password changed. Please sign in again with your new password.' });
   }
 

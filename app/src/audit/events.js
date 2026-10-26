@@ -34,6 +34,10 @@ const EVENT_TYPES = Object.freeze({
   reset_requested: { details: ['outcome'] },
   reset_email_failed: { details: [] },
   password_change_failed: { details: ['reason'] },
+  // Sessions (fail open): sign-out, sign-out everywhere, revocation after a security change
+  logout: { details: [] },
+  logout_all: { details: ['count'] },
+  sessions_revoked: { details: ['reason', 'count', 'actor'] },
   // Account-security changes (fail closed)
   two_factor_enabled: { details: ['method'], critical: true },
   password_reset: { details: [], critical: true },

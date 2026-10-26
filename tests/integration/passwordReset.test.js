@@ -155,7 +155,7 @@ describe('password reset and change (FR-A9, FR-A10) against real PostgreSQL + Re
     // Account ticket from a signed-in session in another browser.
     const other = await csrfAgent(buildRealApp({ db, redis }));
     const signed = await other.post('/auth/login', { identifier: student.matric_no, password: PASSWORDS.student });
-    expect(cookieFrom(signed, 'cg.acct')).toBeDefined();
+    expect(cookieFrom(signed, 'cg.session')).toBeDefined();
 
     const { post, token } = await obtainToken();
     expect((await post('/auth/password/reset', { token, newPassword: NEW_PASSWORD })).status).toBe(200);

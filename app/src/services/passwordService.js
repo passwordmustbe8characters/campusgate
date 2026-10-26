@@ -31,14 +31,14 @@ const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/; // 32 bytes, base64url
  *   single use; a new request cancels older unused tokens.
  * - reset(): same password policy; clears an existing lockout (the old
  *   password it protected no longer exists) but never touches 2FA.
- * - reset() and change() revoke the user's pre-auth and account tickets and
- *   send a "password changed" email without blocking the request.
- *   TODO(Phase 4): also revoke the user's sessions (FR-A10 "log out other sessions").
+ * - reset() and change() revoke the user's pre-auth tickets and EVERY session
+ *   (FR-A10 "log out other sessions", FR-P6), and send a "password changed"
+ *   email without blocking the request.
  * - Audit (FR-L1): reset and change are account-security changes, recorded in
  *   the SAME transaction as the password update (fail closed). Reset requests
  *   and email failures are high volume (fail open).
  */
-function createPasswordService({ db, redis, hasher, delivery, config, tickets, metrics, logger, audit }) {
+function createPasswordService({ db, redis, hasher, delivery, config, tickets, sessions, metrics, logger, audit }) {
   const hashToken = (token) => keyedHash(config.tokenHmacKey, 'reset', token);
 
   // Background work in flight (reset emails, notifications). Graceful shutdown
@@ -52,8 +52,11 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
   const idle = () => Promise.allSettled([...pending]);
   const emailCooldownKey = (email) => `cg:cooldown:reset:${keyedHash(config.tokenHmacKey, 'reset-email', email)}`;
 
-  async function revokeTickets(userId) {
+  /** Sign the user out everywhere after a password reset or change. */
+  async function revokeAccess(userId, reason, ctx) {
     await Promise.all(tickets.map((store) => store.revokeUser(userId)));
+    const count = await sessions.revokeUser(userId, reason);
+    await audit.record('sessions_revoked', { userId, success: true, details: { reason, count } }, ctx);
   }
 
   /** Fire-and-forget notification; failures are logged and counted. */
@@ -174,7 +177,7 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
       return row.user_id;
     });
 
-    await revokeTickets(userId);
+    await revokeAccess(userId, 'password_reset', ctx);
     log.info({ event: 'password_reset', userId }, 'password reset with emailed token');
     const notified = notifyPasswordChanged(await loadAccount(db, userId), 'reset by email link', log);
     return { userId, notified };
@@ -200,7 +203,7 @@ function createPasswordService({ db, redis, hasher, delivery, config, tickets, m
       // Fail closed: if the audit row cannot be written, the change rolls back.
       await audit.recordCritical(trx, 'password_changed', { userId, success: true }, ctx);
     });
-    await revokeTickets(userId);
+    await revokeAccess(userId, 'password_changed', ctx);
     log.info({ event: 'password_changed', userId }, 'password changed');
     const notified = notifyPasswordChanged(account, 'changed in security settings', log);
     return { notified };

@@ -2,8 +2,8 @@
 
 const { auditContext } = require('../audit/audit');
 
-/** Security-settings endpoints. Every route here sits behind requireAccountTicket. */
-function createSettingsController({ settingsService, accountTickets, cookies }) {
+/** Security-settings endpoints. Every route here needs a session and a recent sign-in. */
+function createSettingsController({ settingsService, sessions, cookies }) {
   async function startEmail2fa(req, res) {
     await settingsService.startEmail2fa(req.account.userId, auditContext(req));
     res.status(200).json({ message: 'We sent a 6-digit code to your email. Enter it to turn on two-step sign-in.' });
@@ -29,9 +29,9 @@ function createSettingsController({ settingsService, accountTickets, cookies }) 
     res.set('Cache-Control', 'no-store');
     let message = 'Authenticator app is on. Save these backup codes now: each works once, and they will not be shown again.';
     if (req.account.scope === 'enrol') {
-      // Enrolment-only ticket (admin): done with it. Sign in again, now with TOTP.
-      await accountTickets.revokeUser(req.account.userId);
-      cookies.clearAccount(res);
+      // Enrolment-only session (admin): done with it. Sign in again, now with TOTP.
+      await sessions.revoke(req.account.jti, 'enrolment_complete');
+      cookies.clearSession(res);
       message += ' Then sign in again with your authenticator code.';
     }
     res.status(200).json({ message, backupCodes });

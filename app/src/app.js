@@ -12,18 +12,20 @@ const { healthRouter } = require('./routes/health');
 const { authRouter } = require('./routes/auth');
 const { pagesRouter } = require('./routes/pages');
 const { createCsrf } = require('./middleware/csrf');
-const { ticketCookies, requireAccountTicket } = require('./middleware/tickets');
+const { sessionCookies, requireSession, requireRecentSignIn } = require('./middleware/session');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
 const { createAuthService } = require('./services/authService');
 const { createTicketStore } = require('./services/tickets');
+const { createSessionService } = require('./services/sessions');
 const { createDelivery } = require('./services/delivery');
 const { createOtpService } = require('./services/otpService');
 const { createTotpService } = require('./services/totpService');
 const { createPasswordService } = require('./services/passwordService');
 const { createMetrics } = require('./services/metrics');
 const { createPermissions } = require('./policies/permissions');
+const { getPolicy } = require('./policies/policyRepo');
 const { createAudit } = require('./audit/audit');
 const { createPasswordController } = require('./controllers/passwordController');
 const { createSecondFactorService } = require('./services/secondFactorService');
@@ -39,10 +41,8 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
   const preauthTickets = createTicketStore({
     redis, hmacKey: config.tokenHmacKey, kind: 'preauth', ttlSec: config.preauthTtlSec,
   });
-  // TODO(Phase 4): delete the interim account ticket; use the JWT session.
-  const accountTickets = createTicketStore({
-    redis, hmacKey: config.tokenHmacKey, kind: 'acct', ttlSec: config.accountTicketTtlMin * 60,
-  });
+  // Login-once session tokens (FR-P1) and their revocation (FR-P6).
+  const sessions = createSessionService({ db, redis, jwtSecret: config.jwtSecret });
   const otp = createOtpService({
     db, redis, delivery, hmacKey: config.tokenHmacKey, cooldownSec: config.otpResendCooldownSec,
   });
@@ -60,7 +60,7 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     permissions: createPermissions({ db, redis, logger }),
     audit,
     preauthTickets,
-    accountTickets,
+    sessions,
     otp,
     totp,
     secondFactor,
@@ -68,7 +68,7 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     authService: createAuthService({ db, hasher, logger, audit }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
-      db, redis, hasher, delivery, config, tickets: [preauthTickets, accountTickets], metrics, logger, audit,
+      db, redis, hasher, delivery, config, tickets: [preauthTickets], sessions, metrics, logger, audit,
     }),
   };
 }
@@ -88,13 +88,14 @@ function createApp({
 }) {
   const app = express();
   const csrf = createCsrf(config);
-  const cookies = ticketCookies(config);
+  const cookies = sessionCookies(config);
   const services = createServices({ config, logger, db, redis, hasher, delivery, clock });
-  const ticketDeps = { accountTickets: services.accountTickets, cookies };
-  const requireAccount = requireAccountTicket(ticketDeps);
-  const requireAccountOrEnrolment = requireAccountTicket(ticketDeps, { allowEnrolment: true });
+  const sessionDeps = { sessions: services.sessions, cookies };
+  const requireSignedIn = requireSession(sessionDeps);
+  const requireSignedInOrEnrolment = requireSession(sessionDeps, { allowEnrolment: true });
+  const recent = requireRecentSignIn();
 
-  const controller = createAuthController({ ...services, cookies });
+  const controller = createAuthController({ ...services, cookies, getPolicy: () => getPolicy(db) });
   const settings = createSettingsController({ ...services, cookies });
   const passwords = createPasswordController({ passwordService: services.passwordService, cookies });
 
@@ -124,8 +125,9 @@ function createApp({
 
   // Every non-GET/HEAD/OPTIONS request below this line needs a valid CSRF token.
   app.use(csrf.doubleCsrfProtection);
-  app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment, settingsService: services.settingsService }));
-  app.use(authRouter({ controller, settings, passwords, requireAccount, requireAccountOrEnrolment }));
+  // pagesRouter's requireAccountOrEnrolment slot now takes the session check (security settings page).
+  app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment: requireSignedInOrEnrolment, settingsService: services.settingsService }));
+  app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent }));
 
   app.use(notFound);
   app.use(errorHandler(logger));

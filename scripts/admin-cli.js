@@ -16,11 +16,11 @@
 // transaction (fail closed): if the audit row cannot be written, nothing changes.
 
 const pino = require('pino');
-const Redis = require('ioredis');
 const { loadEnvFile } = require('../app/src/config');
 const { createLogger } = require('../app/src/logger');
 const { createCliAudit } = require('../app/src/audit/cliAudit');
 const { createTicketStore } = require('../app/src/services/tickets');
+const { revokeUserSessions } = require('../app/src/services/sessions');
 const { unlockUser, resetTwoFactor, getUserStatus, listLockedUsers } = require('../app/src/services/userService');
 const {
   setPolicy, setRole, changePermission, listPermissions, policyHistory, AdminChangeError,
@@ -46,23 +46,22 @@ async function announcePermissionChange(redis) {
   return 'running app processes reload it now';
 }
 
-/** Revoke a user's pre-auth and account tickets, if Redis is configured. */
-async function revokeTickets(userId) {
-  if (!process.env.REDIS_URL) return 'skipped (REDIS_URL not set)';
-  const redis = new Redis(process.env.REDIS_URL, { maxRetriesPerRequest: 1, lazyConnect: true });
-  redis.on('error', () => {});
-  try {
-    await redis.connect();
-    // revokeUser only reads the per-user index, so no HMAC key is needed here.
-    const kinds = ['preauth', 'acct'].map((kind) => createTicketStore({ redis, hmacKey: Buffer.alloc(32), kind, ttlSec: 1 }));
-    const counts = await Promise.all(kinds.map((store) => store.revokeUser(userId)));
-    return `${counts.reduce((a, b) => a + b, 0)} revoked`;
-  } finally {
-    redis.disconnect();
-  }
+/**
+ * Sign a user out everywhere: revoke their pre-auth tickets and session tokens
+ * (FR-P6), and record it. Needs Redis, where the denylist lives; without it the
+ * user's tokens stay valid until they expire, and the output says so.
+ */
+async function revokeAccess({ db, audit, ctx, redis }, userId, reason) {
+  if (!process.env.REDIS_URL) return 'NOT revoked (REDIS_URL not set): existing sign-ins last until they expire';
+  // revokeUser only reads the per-user index, so no HMAC key is needed here.
+  const preauth = await createTicketStore({ redis, hmacKey: Buffer.alloc(32), kind: 'preauth', ttlSec: 1 }).revokeUser(userId);
+  const count = await revokeUserSessions({ db, redis }, userId, reason);
+  await audit.record('sessions_revoked', { userId, success: true, details: { reason, count, actor: 'cli' } }, ctx);
+  return `${count} session(s) and ${preauth} pending sign-in(s) revoked`;
 }
 
-async function run(args, { db, audit, ctx, redis }, logger) {
+async function run(args, cli, logger) {
+  const { db, audit, ctx, redis } = cli;
   const [command, identifier, ...flags] = args;
   const confirmed = args.includes('--confirm');
   const plain = flags.filter((a) => a !== '--confirm');
@@ -83,9 +82,9 @@ async function run(args, { db, audit, ctx, redis }, logger) {
       if (!confirmed) return needConfirm(`This changes the role of "${who}" to ${roleName}.`);
       const result = await setRole(db, audit, who, roleName, ctx);
       if (!result.changed) return { code: 0, out: `No change: ${result.user.matric_or_staff_id} already has role ${roleName}.` };
-      const tickets = await revokeTickets(result.user.id);
+      const revoked = await revokeAccess(cli, result.user.id, 'role_changed');
       logger.info({ event: 'role_changed', actor: 'cli', from: result.from, to: result.to }, 'role changed');
-      return { code: 0, out: `Role of ${result.user.matric_or_staff_id} changed: ${result.from} -> ${result.to} (tickets: ${tickets}; they sign in again).` };
+      return { code: 0, out: `Role of ${result.user.matric_or_staff_id} changed: ${result.from} -> ${result.to} (${revoked}; they sign in again).` };
     }
     case 'perm': {
       if (identifier === 'list') {
@@ -127,11 +126,11 @@ async function run(args, { db, audit, ctx, redis }, logger) {
       }
       const row = await resetTwoFactor(db, identifier, { audit, ctx });
       if (!row) return { code: 1, out: `No user found for "${identifier}".` };
-      const tickets = await revokeTickets(row.id);
-      logger.info({ event: 'admin_reset_2fa', actor: 'cli', target: row.matric_or_staff_id, tickets }, 'two-factor reset');
+      const revoked = await revokeAccess(cli, row.id, 'two_factor_reset');
+      logger.info({ event: 'admin_reset_2fa', actor: 'cli', target: row.matric_or_staff_id, revoked }, 'two-factor reset');
       return {
         code: 0,
-        out: `Two-step sign-in reset for ${row.matric_or_staff_id} (backup codes removed: ${row.backupCodesRemoved}; tickets: ${tickets}).\n` +
+        out: `Two-step sign-in reset for ${row.matric_or_staff_id} (backup codes removed: ${row.backupCodesRemoved}; ${revoked}).\n` +
           'Students can set it up again in Security settings; administrators must enrol an authenticator app at next sign-in.',
       };
     }

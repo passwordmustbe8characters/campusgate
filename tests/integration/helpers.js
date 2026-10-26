@@ -28,6 +28,7 @@ const TEST_KEYS = Object.freeze({
   tokenHmacKey: Buffer.alloc(32, 11).toString('base64url'),
   totpEncKey: Buffer.alloc(32, 12).toString('base64url'),
   auditHmacKey: Buffer.alloc(32, 13).toString('base64url'),
+  jwtSecret: Buffer.alloc(32, 14).toString('base64url'),
 });
 
 // Small seed for most tests: 3 registered + 3 free students, plus staff and admin.
@@ -212,6 +213,7 @@ function buildRealApp({ db, redis, hasher, env = {}, logger, delivery = captureD
     TOKEN_HMAC_KEY: TEST_KEYS.tokenHmacKey,
     TOTP_ENC_KEY: TEST_KEYS.totpEncKey,
     AUDIT_HMAC_KEY: TEST_KEYS.auditHmacKey,
+    JWT_SECRET: TEST_KEYS.jwtSecret,
     ...env,
   });
   const app = createApp({

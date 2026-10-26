@@ -3,8 +3,8 @@
 const { connectDb } = require('./helpers');
 
 const TABLES = [
-  'auth_logs', 'otp_codes', 'password_reset_tokens', 'policies', 'policy_history', 'role_permissions', 'roles', 'services', 'student_records',
-  'totp_backup_codes', 'users',
+  'auth_logs', 'otp_codes', 'password_reset_tokens', 'policies', 'policy_history', 'role_permissions', 'roles', 'services', 'sessions',
+  'student_records', 'totp_backup_codes', 'users',
 ];
 
 async function tables(db) {

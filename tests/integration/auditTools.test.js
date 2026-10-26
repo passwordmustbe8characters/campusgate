@@ -228,10 +228,10 @@ describe('audit tools: verify, search, export; admin policy/role/permission comm
       expect(await db('policy_history')).toHaveLength(0);
     });
 
-    test('role set: changes the role, records old and new, and revokes the user\'s tickets', async () => {
-      const { post } = await csrfAgent(buildRealApp({ db, redis }));
+    test('role set: changes the role, records old and new, and signs the user out (sessions revoked)', async () => {
+      const { post, agent } = await csrfAgent(buildRealApp({ db, redis }));
       await post('/auth/login', { identifier: REGISTERED[0].matric_no, password: PASSWORDS.student });
-      expect((await redis.keys('cg:acct:*')).length).toBeGreaterThan(0);
+      expect((await agent.get('/account/security')).status).toBe(200);
 
       const res = await admin('role', 'set', REGISTERED[0].matric_no, 'staff', '--confirm');
       expect(res.code).toBe(0);
@@ -240,7 +240,10 @@ describe('audit tools: verify, search, export; admin policy/role/permission comm
       expect(history).toMatchObject({ old_value: { role: 'student' }, new_value: { role: 'staff' } });
       const [event] = await db('auth_logs').where({ event_type: 'role_changed' });
       expect(event.details).toEqual({ actor: 'cli', from: 'student', to: 'staff' });
-      expect(await redis.keys('cg:acct:*')).toHaveLength(0);
+      // The old token carried role "student": it must stop working at once.
+      expect((await agent.get('/account/security')).status).toBe(302);
+      const [revoked] = await db('auth_logs').where({ event_type: 'sessions_revoked' });
+      expect(revoked.details).toEqual({ reason: 'role_changed', count: 1, actor: 'cli' });
     });
 
     test('perm grant/revoke: recorded, and a running app reloads its permission map without a restart', async () => {

@@ -6,6 +6,7 @@ const { TEST_ENV } = require('./helpers');
 const KEY_A = Buffer.alloc(32, 7).toString('base64url');
 const KEY_B = Buffer.alloc(32, 9).toString('base64');
 const KEY_C = Buffer.alloc(32, 5).toString('base64url');
+const KEY_D = Buffer.alloc(32, 6).toString('base64url');
 
 const MINIMAL = {
   DATABASE_URL: 'postgres://x',
@@ -14,6 +15,7 @@ const MINIMAL = {
   TOKEN_HMAC_KEY: KEY_A,
   TOTP_ENC_KEY: KEY_B,
   AUDIT_HMAC_KEY: KEY_C,
+  JWT_SECRET: KEY_D,
 };
 
 describe('loadConfig', () => {
@@ -91,6 +93,16 @@ describe('Phase 2 keys and delivery settings', () => {
     expect(() => loadConfig({ ...MINIMAL, AUDIT_HMAC_KEY: Buffer.alloc(16).toString('base64') })).toThrow(/AUDIT_HMAC_KEY must decode to at least 32 bytes/);
   });
 
+  test('JWT_SECRET (Phase 4) is required, at least 32 bytes, and distinct from every other key', () => {
+    const { JWT_SECRET, ...rest } = MINIMAL;
+    expect(() => loadConfig(rest)).toThrow(/JWT_SECRET is required/);
+    expect(() => loadConfig({ ...MINIMAL, JWT_SECRET: Buffer.alloc(16).toString('base64') })).toThrow(/JWT_SECRET must decode to at least 32 bytes/);
+    for (const other of [KEY_A, KEY_B, KEY_C, MINIMAL.CSRF_SECRET]) {
+      expect(() => loadConfig({ ...MINIMAL, JWT_SECRET: other })).toThrow(/must all be different/);
+    }
+    expect(loadConfig(MINIMAL).jwtSecret).toEqual(Buffer.alloc(32, 6));
+  });
+
   test('defaults: email driver, 30-minute reset tokens, 60 s cooldowns, 5 ticket attempts', () => {
     expect(loadConfig(MINIMAL)).toMatchObject({
       otpDeliveryDriver: 'email',
@@ -99,7 +111,6 @@ describe('Phase 2 keys and delivery settings', () => {
       resetCooldownSec: 60,
       preauthTtlSec: 300,
       preauthMaxAttempts: 5,
-      accountTicketTtlMin: 10,
       appBaseUrl: 'http://localhost:3000',
     });
   });

@@ -117,9 +117,12 @@ describe('audit log (FR-L1, FR-L3) in sync mode, against real PostgreSQL + Redis
 
     // HTTP events carry IP and user agent; CLI events say so.
     const all = await rows(db);
-    const httpRows = all.filter((r) => !r.event_type.startsWith('admin_'));
+    // CLI rows: the admin actions, plus the session revocation that reset-2fa records.
+    const fromCli = (r) => r.event_type.startsWith('admin_') || (r.event_type === 'sessions_revoked' && r.details.actor === 'cli');
+    const httpRows = all.filter((r) => !fromCli(r));
     expect(httpRows.every((r) => r.user_agent === UA && /127\.0\.0\.1/.test(r.ip))).toBe(true);
-    const cliRows = all.filter((r) => r.event_type.startsWith('admin_'));
+    const cliRows = all.filter(fromCli);
+    expect(cliRows.some((r) => r.event_type === 'sessions_revoked')).toBe(true);
     expect(cliRows.every((r) => r.user_agent === 'cli' && r.details.actor === 'cli')).toBe(true);
 
     // The unknown-user failure stores a keyed hash of what was typed, not the text.

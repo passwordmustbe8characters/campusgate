@@ -49,7 +49,7 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ status: 'second_factor_required', method: 'email', codeSent: true });
     expect(cookieFrom(res, 'cg.preauth')).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(cookieFrom(res, 'cg.acct')).toBeUndefined();
+    expect(cookieFrom(res, 'cg.session')).toBeUndefined();
     expect(delivery.sent).toHaveLength(1);
     expect(delivery.sent[0].email).toBe(student.email);
     // A correct password alone does NOT reset the counter for a 2FA account.
@@ -74,7 +74,7 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
     const ok = await post('/auth/otp', { code });
     expect(ok.status).toBe(200);
     expect(ok.body).toEqual({ status: 'signed_in', message: 'Signed in.', role: 'student' });
-    expect(cookieFrom(ok, 'cg.acct')).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(cookieFrom(ok, 'cg.session')).toMatch(/^[\w-]+\.[\w-]+\.[\w-]+$/);
     const row = await userRow(db, student.matric_no);
     expect(row.failed_attempts).toBe(0);
     expect(row.last_login).toBeInstanceOf(Date);
@@ -186,11 +186,15 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
       expect(res.status).toBe(503);
       expect((await userRow(db, student.matric_no)).failed_attempts).toBe(0);
 
-      // A password-only account still signs in without Redis (only settings are unavailable).
+      // A password-only account still signs in without Redis (the session record is in PostgreSQL),
+      // but protected pages fail closed until Redis (the revocation list) is back.
       const plain = await post('/auth/login', { identifier: REGISTERED[1].matric_no, password: PASSWORDS.student });
       expect(plain.status).toBe(200);
       expect(plain.body.status).toBe('signed_in');
-      expect(cookieFrom(plain, 'cg.acct')).toBeUndefined();
+      expect(cookieFrom(plain, 'cg.session')).toBeDefined();
+      const { agent } = await csrfAgent(app);
+      const page = await agent.get('/account/security').set('Cookie', `cg.session=${cookieFrom(plain, 'cg.session')}`);
+      expect(page.status).toBe(503);
     } finally {
       deadRedis.disconnect();
     }
@@ -203,6 +207,7 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
       NODE_ENV: 'test', DATABASE_URL: 'postgres://x', REDIS_URL: 'redis://x', CSRF_SECRET: 'x'.repeat(32),
       TOKEN_HMAC_KEY: Buffer.alloc(32, 1).toString('base64'), TOTP_ENC_KEY: Buffer.alloc(32, 2).toString('base64'),
       AUDIT_HMAC_KEY: Buffer.alloc(32, 3).toString('base64'),
+      JWT_SECRET: Buffer.alloc(32, 4).toString('base64'),
       OTP_DELIVERY_DRIVER: 'sms-mock',
     });
     const sms = createDelivery(config, { redis });
@@ -227,6 +232,6 @@ describe('email OTP second factor (FR-A7, FR-A14) against real PostgreSQL + Redi
     expect(output).not.toContain(code);
     expect(output).not.toContain(wrong);
     expect(output).not.toContain(cookieFrom(res, 'cg.preauth'));
-    expect(output).not.toContain(cookieFrom(ok, 'cg.acct'));
+    expect(output).not.toContain(cookieFrom(ok, 'cg.session'));
   });
 });
