@@ -1,0 +1,118 @@
+{
+  "measuredAt": "2026-10-26T23:13:45.979Z",
+  "machine": {
+    "cpus": 4,
+    "cpuModel": "Intel(R) Core(TM) i7-6600U CPU @ 2.60GHz",
+    "totalMemGB": 8,
+    "platform": "linux 6.18.54.1-microsoft-standard-WSL2",
+    "node": "v24.21.0"
+  },
+  "settings": {
+    "bcryptCost": 10,
+    "uvThreadpoolSize": 4,
+    "auditMode": "sync"
+  },
+  "bcryptCompare": {
+    "samples": 30,
+    "medianMs": 191.56,
+    "p95Ms": 210.34,
+    "meanMs": 190.16
+  },
+  "dbSignInLookup": {
+    "samples": 100,
+    "medianMs": 1.74,
+    "p95Ms": 9.37,
+    "meanMs": 3
+  },
+  "dbPolicyRead": {
+    "samples": 100,
+    "medianMs": 1.46,
+    "p95Ms": 8.84,
+    "meanMs": 2.59
+  },
+  "auditWrite": {
+    "samples": 50,
+    "medianMs": 13.88,
+    "p95Ms": 25.33,
+    "meanMs": 13.16
+  },
+  "otpIssueWithEmail": {
+    "samples": 10,
+    "medianMs": 87.08,
+    "p95Ms": 190.49,
+    "deliveryDriver": "email"
+  },
+  "otpVerify": {
+    "samples": 10,
+    "medianMs": 20.2,
+    "p95Ms": 39.75
+  },
+  "throughput": [
+    {
+      "workers": 1,
+      "users": 200,
+      "rampSec": 10,
+      "timeoutMs": 30000,
+      "maxRetries": 2,
+      "wallSec": 26.8,
+      "succeeded": 200,
+      "failed": 0,
+      "gaveUp": 0,
+      "successRatePct": 100,
+      "signInMeanMs": 17491,
+      "signInP95Ms": 20634,
+      "loginRequestMeanMs": 16547,
+      "loginRequestP95Ms": 19608,
+      "timeouts": 0,
+      "rateLimited": 0,
+      "httpErrors": 0,
+      "queuedStudents": 0,
+      "queueWaitMeanMs": null,
+      "signInsPerSec": 7.46
+    },
+    {
+      "workers": 2,
+      "users": 200,
+      "rampSec": 10,
+      "timeoutMs": 30000,
+      "maxRetries": 2,
+      "wallSec": 59.3,
+      "succeeded": 200,
+      "failed": 0,
+      "gaveUp": 0,
+      "successRatePct": 100,
+      "signInMeanMs": 49861,
+      "signInP95Ms": 54249,
+      "loginRequestMeanMs": 19431,
+      "loginRequestP95Ms": 22427,
+      "timeouts": 188,
+      "rateLimited": 0,
+      "httpErrors": 0,
+      "queuedStudents": 0,
+      "queueWaitMeanMs": null,
+      "signInsPerSec": 3.37
+    },
+    {
+      "workers": 4,
+      "users": 200,
+      "rampSec": 10,
+      "timeoutMs": 30000,
+      "maxRetries": 2,
+      "wallSec": 31.3,
+      "succeeded": 200,
+      "failed": 0,
+      "gaveUp": 0,
+      "successRatePct": 100,
+      "signInMeanMs": 23121,
+      "signInP95Ms": 26590,
+      "loginRequestMeanMs": 22343,
+      "loginRequestP95Ms": 25991,
+      "timeouts": 0,
+      "rateLimited": 0,
+      "httpErrors": 0,
+      "queuedStudents": 0,
+      "queueWaitMeanMs": null,
+      "signInsPerSec": 6.39
+    }
+  ]
+}

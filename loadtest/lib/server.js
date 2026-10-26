@@ -19,7 +19,7 @@ async function startServer({ port, workers = 1, env = {} }) {
       CLUSTER_WORKERS: String(workers),
       LOG_LEVEL: 'warn',
       // Every virtual student comes from this one machine: lift the per-IP limit for test runs.
-      RATE_LIMIT_IP_PER_MIN: '10000000',
+      RATE_LIMIT_IP_PER_MIN: '1000000', // the configured maximum
       RATE_LIMIT_ACCOUNT_PER_MIN: '1000',
       ...env,
     },
