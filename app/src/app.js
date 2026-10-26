@@ -16,6 +16,9 @@ const { createPortalService } = require('./services/portalService');
 const { createCsrf } = require('./middleware/csrf');
 const { sessionCookies, requireSession, requireRecentSignIn } = require('./middleware/session');
 const { createRateLimiter } = require('./middleware/rateLimit');
+const { requireAdmission } = require('./middleware/admission');
+const { queueRouter } = require('./routes/queue');
+const { createWaitingRoom } = require('./services/waitingRoom');
 const { notFound } = require('./middleware/notFound');
 const { errorHandler } = require('./middleware/errorHandler');
 const { createHasher } = require('./services/passwordHasher');
@@ -69,6 +72,9 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     secondFactor,
     metrics,
     portalService: createPortalService({ db }),
+    waitingRoom: createWaitingRoom({
+      redis, hmacKey: config.tokenHmacKey, passTtlSec: config.queuePassTtlSec, ticketTimeoutSec: config.queueTicketTimeoutSec,
+    }),
     authService: createAuthService({ db, hasher, logger, audit }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
@@ -106,7 +112,9 @@ function createApp({
     metrics: services.metrics,
   });
 
-  const controller = createAuthController({ ...services, cookies, getPolicy: () => getPolicy(db) });
+  const policyNow = () => getPolicy(db);
+  const controller = createAuthController({ ...services, cookies, getPolicy: policyNow });
+  const admission = requireAdmission({ waitingRoom: services.waitingRoom, getPolicy: policyNow, cookies, db });
   const settings = createSettingsController({ ...services, cookies });
   const passwords = createPasswordController({ passwordService: services.passwordService, cookies });
 
@@ -138,7 +146,8 @@ function createApp({
   app.use(csrf.doubleCsrfProtection);
   // pagesRouter's requireAccountOrEnrolment slot now takes the session check (security settings page).
   app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment: requireSignedInOrEnrolment, settingsService: services.settingsService }));
-  app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent, rateLimiter }));
+  app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent, rateLimiter, admission }));
+  app.use(queueRouter({ csrf, waitingRoom: services.waitingRoom, getPolicy: policyNow, cookies }));
   app.use(portalRouter({ csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService }));
 
   app.use(notFound);

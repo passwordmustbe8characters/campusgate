@@ -22,7 +22,7 @@ const ENROLMENT_SESSION_MAX_MIN = 10;
  * a `sessions` record. Lifetime = policies.session_timeout_min, read now, so a
  * policy change applies to the next sign-in without a restart.
  */
-async function startSession(req, res, user, scope, { sessions, cookies, getPolicy }) {
+async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom }) {
   const policy = await getPolicy();
   const ttlMin = scope === 'enrol'
     ? Math.min(policy.session_timeout_min, ENROLMENT_SESSION_MAX_MIN)
@@ -32,10 +32,16 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
   });
   cookies.clearPreauth(res);
   cookies.setSession(res, session);
+  // The sign-in is complete: give its waiting-room place to the next person (FR-P2).
+  const pass = req.cookies[cookies.names.admissionPass];
+  if (pass && waitingRoom) {
+    await waitingRoom.release(pass).catch((err) => req.log.warn({ event: 'admission_release_failed', err }, 'could not release admission pass'));
+    cookies.clearAdmissionPass(res);
+  }
 }
 
-function createAuthController({ authService, secondFactor, sessions, cookies, getPolicy, audit }) {
-  const sessionDeps = { sessions, cookies, getPolicy };
+function createAuthController({ authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom }) {
+  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom };
 
   async function signIn(req, res, user) {
     await startSession(req, res, user, 'full', sessionDeps);

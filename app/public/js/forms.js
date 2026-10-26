@@ -1,7 +1,16 @@
 // Submits [data-api] forms as JSON with the CSRF token header.
-// TODO(Phase 5): exponential backoff on 429/503 using Retry-After (FR-P4).
+// On 429/503 it waits (Retry-After, doubling each time) and retries (FR-P4);
+// a { queued: true } reply sends the user to the waiting room (FR-P2).
 (function () {
   'use strict';
+
+  var MAX_RETRIES = 3;
+
+  // Retry-After seconds if given (else 2 s), doubled per retry, at most 60 s.
+  function backoffMs(retryAfter, retries) {
+    var base = Number(retryAfter) > 0 ? Number(retryAfter) * 1000 : 2000;
+    return Math.min(60000, base * Math.pow(2, retries));
+  }
 
   var csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
 
@@ -40,7 +49,10 @@
       form.querySelectorAll('[data-error-for]').forEach(function (el) { el.textContent = ''; });
       setText(message, '');
       button.disabled = true;
+      send(0);
+    });
 
+    function send(retries) {
       fetch(form.getAttribute('data-api'), {
         method: 'POST',
         credentials: 'same-origin',
@@ -49,11 +61,23 @@
       })
         .then(function (res) {
           return res.json().catch(function () { return {}; }).then(function (body) {
-            return { ok: res.ok, status: res.status, body: body };
+            return { ok: res.ok, status: res.status, body: body, retryAfter: res.headers.get('Retry-After') };
           });
         })
         .then(function (result) {
           var body = result.body;
+          // Waiting room (FR-P2): take a place in the queue.
+          if (body.queued) {
+            window.location.assign(body.redirect || '/waiting');
+            return 'leaving';
+          }
+          // Busy or rate limited (FR-P4): wait as the server asks, then try again with backoff.
+          if ((result.status === 429 || result.status === 503) && retries < MAX_RETRIES) {
+            var wait = backoffMs(result.retryAfter, retries);
+            setText(message, (body.error || 'The system is busy.') + ' Trying again in ' + Math.ceil(wait / 1000) + ' s…', 'error');
+            setTimeout(function () { send(retries + 1); }, wait);
+            return 'retrying';
+          }
           if (result.ok) {
             // Sign-in flow: follow the status the server returns.
             if (body.status === 'second_factor_required') {
@@ -115,7 +139,7 @@
         .catch(function () {
           setText(message, 'Network problem. Check your connection and try again.', 'error');
         })
-        .then(function () { button.disabled = false; });
-    });
+        .then(function (state) { if (state !== 'retrying' && state !== 'leaving') button.disabled = false; });
+    }
   });
 })();

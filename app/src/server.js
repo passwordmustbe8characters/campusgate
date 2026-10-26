@@ -7,6 +7,7 @@ const { createRedis } = require('./db/redis');
 const { createHasher } = require('./services/passwordHasher');
 const { createDelivery } = require('./services/delivery');
 const { createApp } = require('./app');
+const { getPolicy } = require('./policies/policyRepo');
 
 loadEnvFile();
 
@@ -37,8 +38,10 @@ async function main() {
   }
 
   const app = createApp({ config, logger, db, redis, hasher, delivery });
-  const { permissions } = app.get('services');
+  const { permissions, waitingRoom } = app.get('services');
   await permissions.start(); // load role -> service map, subscribe to change notices
+  // Waiting-room admitter: every process runs it; exactly one admits per interval (Redis slot).
+  const stopAdmitter = waitingRoom.startAdmitter({ getPolicy: () => getPolicy(db), logger });
 
   const server = app.listen(config.port, () => {
     logger.info(
@@ -62,6 +65,7 @@ async function main() {
     try {
       await new Promise((resolve) => server.close(resolve));
       await app.get('background').idle(); // let queued reset/notification emails finish
+      stopAdmitter();
       await permissions.stop();
       await Promise.allSettled([db.destroy(), redis.quit(), delivery.close && delivery.close()]);
       clearTimeout(forceExit);

@@ -161,6 +161,12 @@ function loadConfig(env = process.env) {
     // per account is tight. Lockout still stops password guessing.
     rateLimitIpPerMin: intInRange(env, 'RATE_LIMIT_IP_PER_MIN', 300, 1, 1000000, errors),
     rateLimitAccountPerMin: intInRange(env, 'RATE_LIMIT_ACCOUNT_PER_MIN', 10, 1, 1000000, errors),
+
+    // --- Phase 5: waiting room (capacity, batch and interval are policies, set without restart) ---
+    // A sign-in pass holds a place this long unless the sign-in completes sooner.
+    queuePassTtlSec: intInRange(env, 'QUEUE_PASS_TTL_SEC', 120, 10, 3600, errors),
+    // A queued ticket whose page stops polling is dropped after this long.
+    queueTicketTimeoutSec: intInRange(env, 'QUEUE_TICKET_TIMEOUT_SEC', 30, 5, 600, errors),
   };
 
   if (config.csrfSecret && config.csrfSecret.length < 32) {

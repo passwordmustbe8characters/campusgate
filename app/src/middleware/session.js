@@ -34,9 +34,18 @@ const SESSION_UNAVAILABLE = 'Sign-in checks are unavailable right now. Please tr
 function sessionCookies(config) {
   const prefix = config.cookieSecure ? '__Host-' : '';
   const base = { httpOnly: true, sameSite: 'strict', secure: config.cookieSecure, path: '/' };
-  const names = { preauth: `${prefix}cg.preauth`, session: `${prefix}cg.session` };
+  const names = {
+    preauth: `${prefix}cg.preauth`,
+    session: `${prefix}cg.session`,
+    queueTicket: `${prefix}cg.wr`, // waiting-room ticket (FR-P2)
+    admissionPass: `${prefix}cg.admit`, // permission to start a sign-in
+  };
   return {
     names,
+    setQueueTicket: (res, ticket) => res.cookie(names.queueTicket, ticket, { ...base, maxAge: 60 * 60 * 1000 }),
+    clearQueueTicket: (res) => res.clearCookie(names.queueTicket, base),
+    setAdmissionPass: (res, pass) => res.cookie(names.admissionPass, pass, { ...base, maxAge: config.queuePassTtlSec * 1000 }),
+    clearAdmissionPass: (res) => res.clearCookie(names.admissionPass, base),
     setPreauth: (res, token) => res.cookie(names.preauth, token, { ...base, maxAge: config.preauthTtlSec * 1000 }),
     clearPreauth: (res) => res.clearCookie(names.preauth, base),
     setSession: (res, { token, maxAgeMs }) => res.cookie(names.session, token, { ...base, maxAge: maxAgeMs }),

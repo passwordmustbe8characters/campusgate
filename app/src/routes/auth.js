@@ -98,7 +98,7 @@ function authRouter({
   const admit = admission || [];
 
   router.post('/auth/register', rl('register', true), registerRules, validate, controller.register);
-  router.post('/auth/login', rl('login', true), admit, loginRules, validate, controller.login);
+  router.post('/auth/login', rl('login', true), loginRules, validate, admit, controller.login);
 
   // Second step of sign-in (pre-auth ticket cookie; the ticket has its own attempt limit).
   router.post('/auth/otp', rl('second_factor', false), sixDigitCode(), validate, controller.verifySecondFactor('email', 'code'));

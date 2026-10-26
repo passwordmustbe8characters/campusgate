@@ -1,0 +1,11 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Waiting room</h1>
+    <p>Sign-in is very busy right now. You are in the queue and will be let in automatically, in order.</p>
+    <div data-waiting>
+      <p class="queue-position">Your place in the queue: <strong data-position>…</strong></p>
+      <p class="hint">Estimated wait: <span data-eta>…</span></p>
+      <p class="hint">Keep this page open. If you close it, you lose your place after about 30 seconds.</p>
+      <p class="msg" data-queue-message role="status" aria-live="polite"></p>
+    </div>
+    <script src="/public/js/waiting.js" defer></script>
+<%- include('partials/bottom') %>
