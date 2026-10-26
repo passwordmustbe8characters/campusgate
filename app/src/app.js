@@ -169,7 +169,9 @@ function createApp({
   app.use(queueRouter({ csrf, waitingRoom: services.waitingRoom, getPolicy: policyNow, cookies }));
   app.use(emailPagesRouter({ csrf }));
   app.use(adminRouter({ db, redis, config, csrf, requireSignedIn, recent, permissions: services.permissions, services }));
-  app.use(portalRouter({ csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService }));
+  app.use(portalRouter({
+    db, csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService, otp: services.otp, audit: services.audit,
+  }));
 
   app.use(notFound);
   app.use(errorHandler(logger));

@@ -24,7 +24,7 @@ const ENROLMENT_SESSION_MAX_MIN = 10;
  * a `sessions` record. Lifetime = policies.session_timeout_min, read now, so a
  * policy change applies to the next sign-in without a restart.
  */
-async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom, deviceAlert }) {
+async function startSession(req, res, user, scope, { sessions, cookies, getPolicy, waitingRoom, deviceAlert, audit }) {
   const policy = await getPolicy();
   const ttlMin = scope === 'enrol'
     ? Math.min(policy.session_timeout_min, ENROLMENT_SESSION_MAX_MIN)
@@ -32,6 +32,11 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
   // FR-A12: compare with earlier sessions BEFORE this one is recorded.
   if (deviceAlert && scope === 'full') {
     await deviceAlert.checkAndNotify(user.id, { ip: req.ip, userAgent: req.get('user-agent') }, auditContext(req));
+  }
+  // FR-Z3: at most policies.max_sessions at once; the oldest make room for the new one.
+  const ended = await sessions.makeRoomFor(user.id, policy.max_sessions);
+  if (ended > 0) {
+    await audit.record('sessions_revoked', { userId: user.id, success: true, details: { reason: 'session_limit', count: ended } }, auditContext(req));
   }
   const session = await sessions.issue({
     userId: user.id, role: user.role, scope, ttlMin, ip: req.ip, userAgent: req.get('user-agent'),
@@ -49,7 +54,7 @@ async function startSession(req, res, user, scope, { sessions, cookies, getPolic
 function createAuthController({
   authService, secondFactor, sessions, cookies, getPolicy, audit, waitingRoom, recordLoginTime, emailVerification, deviceAlert,
 }) {
-  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom, deviceAlert };
+  const sessionDeps = { sessions, cookies, getPolicy, waitingRoom, deviceAlert, audit };
 
   async function signIn(req, res, user) {
     await startSession(req, res, user, 'full', sessionDeps);

@@ -28,7 +28,7 @@ function createPortalService({ db }) {
     const level = user && user.level ? user.level : 100;
     const items = await db('demo_fees').where({ level }).orderBy('id').select('item', 'amount_naira');
     const invoices = await db('demo_invoices').where({ user_id: userId }).orderBy('id', 'desc').limit(5)
-      .select('reference', 'total_naira', 'created_at');
+      .select('reference', 'total_naira', 'created_at', 'paid_at');
     const total = items.reduce((sum, i) => sum + i.amount_naira, 0);
     return { user, level, items, total, invoices };
   }
@@ -47,6 +47,17 @@ function createPortalService({ db }) {
     }
   }
 
+  /** The user's own unpaid invoice with this reference, or null. */
+  async function unpaidInvoice(userId, reference) {
+    if (typeof reference !== 'string' || reference.length > 32) return null;
+    return db('demo_invoices').where({ user_id: userId, reference }).whereNull('paid_at').first('id', 'reference', 'total_naira');
+  }
+
+  /** Mark paid (demo). Atomic: only an unpaid invoice of this user changes. */
+  async function markPaid(userId, reference) {
+    return (await db('demo_invoices').where({ user_id: userId, reference }).whereNull('paid_at').update({ paid_at: db.fn.now() })) === 1;
+  }
+
   async function hostels() {
     return db('demo_hostels').orderBy('hall').select('hall', 'beds_free', 'beds_total');
   }
@@ -58,7 +69,7 @@ function createPortalService({ db }) {
     return { user, level, courses: rows, totalUnits: rows.reduce((sum, c) => sum + c.units, 0) };
   }
 
-  return { fees, generateInvoice, hostels, courses };
+  return { fees, generateInvoice, unpaidInvoice, markPaid, hostels, courses };
 }
 
 module.exports = { createPortalService, invoiceReference, REF_ALPHABET };

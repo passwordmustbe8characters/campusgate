@@ -110,11 +110,25 @@ function createSessionService({ db, redis, jwtSecret }) {
     return (await denyAll(db, redis, [row], reason)) === 1;
   }
 
+  /**
+   * Concurrent-session limit (FR-Z3): before a new sign-in, end this user's
+   * OLDEST live sessions so that, with the new one, at most `max` remain.
+   * Returns how many were ended.
+   */
+  async function makeRoomFor(userId, max, reason = 'session_limit') {
+    const live = await db('sessions').where({ user_id: userId }).whereNull('revoked_at')
+      .where('expires_at', '>', db.fn.now()).orderBy('created_at').orderBy('id').select('jti', 'expires_at');
+    const excess = live.length - (max - 1);
+    if (excess <= 0) return 0;
+    return denyAll(db, redis, live.slice(0, excess), reason);
+  }
+
   return {
     issue,
     verify,
     isRevoked,
     revoke,
+    makeRoomFor,
     revokeUser: (userId, reason) => revokeUserSessions({ db, redis }, userId, reason),
   };
 }

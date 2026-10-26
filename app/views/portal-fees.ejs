@@ -18,8 +18,25 @@
 
     <% if (invoices.length > 0) { %>
       <h2>Your recent invoices</h2>
+      <p class="hint">Paying needs a fresh code sent to your email (step-up check). Demonstration only: no money moves.</p>
       <ul>
-        <% invoices.forEach(function (inv) { %><li><%= inv.reference %>: NGN <%= inv.total_naira.toLocaleString('en-NG') %></li><% }) %>
+        <% invoices.forEach(function (inv) { %>
+          <li><%= inv.reference %>: NGN <%= inv.total_naira.toLocaleString('en-NG') %> ·
+            <% if (inv.paid_at) { %><strong>PAID (demo)</strong><% } else { %>unpaid
+              <form data-api="/portal/fees/pay/start" novalidate>
+                <input type="hidden" name="reference" value="<%= inv.reference %>">
+                <button type="submit">Pay (demo): send me a code</button>
+                <p class="msg" data-message role="status" aria-live="polite"></p>
+              </form>
+              <form data-api="/portal/fees/pay/confirm" data-reload novalidate>
+                <input type="hidden" name="reference" value="<%= inv.reference %>">
+                <label>Code from the email <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required></label>
+                <button type="submit">Confirm payment</button>
+                <p class="msg" data-message role="status" aria-live="polite"></p>
+              </form>
+            <% } %>
+          </li>
+        <% }) %>
       </ul>
     <% } %>
     <p><a href="/home">Back to home</a></p>
