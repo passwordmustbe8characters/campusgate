@@ -11,6 +11,8 @@ const { errSerializer } = require('./logger');
 const { healthRouter } = require('./routes/health');
 const { authRouter } = require('./routes/auth');
 const { pagesRouter } = require('./routes/pages');
+const { portalRouter } = require('./routes/portal');
+const { createPortalService } = require('./services/portalService');
 const { createCsrf } = require('./middleware/csrf');
 const { sessionCookies, requireSession, requireRecentSignIn } = require('./middleware/session');
 const { notFound } = require('./middleware/notFound');
@@ -65,6 +67,7 @@ function createServices({ config, logger, db, redis, hasher, delivery, clock, au
     totp,
     secondFactor,
     metrics,
+    portalService: createPortalService({ db }),
     authService: createAuthService({ db, hasher, logger, audit }),
     settingsService: createAccountSettingsService({ db, otp, totp, logger, audit }),
     passwordService: createPasswordService({
@@ -128,6 +131,7 @@ function createApp({
   // pagesRouter's requireAccountOrEnrolment slot now takes the session check (security settings page).
   app.use(pagesRouter({ db, csrf, requireAccountOrEnrolment: requireSignedInOrEnrolment, settingsService: services.settingsService }));
   app.use(authRouter({ controller, settings, passwords, requireSignedIn, requireSignedInOrEnrolment, recent }));
+  app.use(portalRouter({ csrf, requireSignedIn, permissions: services.permissions, portalService: services.portalService }));
 
   app.use(notFound);
   app.use(errorHandler(logger));

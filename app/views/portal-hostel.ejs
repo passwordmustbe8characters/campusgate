@@ -1,0 +1,12 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Hostel</h1>
+    <p class="msg msg-error"><strong>DEMONSTRATION DATA.</strong> These halls and bed counts are not real.</p>
+
+    <table>
+      <thead><tr><th>Hall</th><th>Beds free</th><th>Total beds</th></tr></thead>
+      <tbody>
+        <% halls.forEach(function (h) { %><tr><td><%= h.hall %></td><td><%= h.beds_free %></td><td><%= h.beds_total %></td></tr><% }) %>
+      </tbody>
+    </table>
+    <p><a href="/home">Back to home</a></p>
+<%- include('partials/bottom') %>

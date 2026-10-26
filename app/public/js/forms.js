@@ -60,7 +60,11 @@
               window.location.assign('/verify?method=' + encodeURIComponent(body.method));
               return;
             }
-            if (body.status === 'signed_in' || body.status === 'enrolment_required') {
+            if (body.status === 'signed_in') {
+              window.location.assign('/home');
+              return;
+            }
+            if (body.status === 'enrolment_required') {
               window.location.assign('/account/security');
               return;
             }

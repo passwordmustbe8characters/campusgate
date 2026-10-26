@@ -1,0 +1,27 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Home</h1>
+    <p class="hint">Signed in (<%= account.role %>). This sign-in is valid until
+      <time datetime="<%= expiresAt.toISOString() %>"><%= expiresAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' }) %></time> (Lagos time).</p>
+
+    <h2>Services</h2>
+    <ul class="menu">
+      <% if (can.fees) { %><li><a href="/portal/fees">Fees</a></li><% } %>
+      <% if (can.hostel) { %><li><a href="/portal/hostel">Hostel</a></li><% } %>
+      <% if (can.course_registration) { %><li><a href="/portal/registration">Course registration</a></li><% } %>
+      <% if (!can.fees && !can.hostel && !can.course_registration) { %><li>No portal services are available to your role.</li><% } %>
+    </ul>
+
+    <h2>Account</h2>
+    <ul class="menu">
+      <li><a href="/account/security">Security settings</a></li>
+    </ul>
+    <form data-api="/auth/logout" data-redirect="/login" novalidate>
+      <button type="submit">Sign out</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+    <form data-api="/auth/logout-all" data-redirect="/login" novalidate>
+      <button type="submit">Sign out everywhere</button>
+      <p class="hint">Ends your sign-in on every phone and computer.</p>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+<%- include('partials/bottom') %>

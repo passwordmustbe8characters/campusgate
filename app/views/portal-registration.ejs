@@ -1,0 +1,14 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Course registration</h1>
+    <p class="msg msg-error"><strong>DEMONSTRATION DATA.</strong> This course list is not a real curriculum.</p>
+    <p class="hint"><%= user ? user.matric_or_staff_id : '' %> · <%= level %> level</p>
+
+    <table>
+      <thead><tr><th>Code</th><th>Title</th><th>Units</th></tr></thead>
+      <tbody>
+        <% courses.forEach(function (c) { %><tr><td><%= c.code %></td><td><%= c.title %></td><td><%= c.units %></td></tr><% }) %>
+      </tbody>
+      <tfoot><tr><th colspan="2">Total units</th><th><%= totalUnits %></th></tr></tfoot>
+    </table>
+    <p><a href="/home">Back to home</a></p>
+<%- include('partials/bottom') %>

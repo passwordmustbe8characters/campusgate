@@ -1,7 +1,8 @@
 <%- include('partials/top', { title, csrfToken }) %>
     <h1>Security settings</h1>
     <p class="hint">Signed in as <%= status.matric %> (<%= status.role %>).
-      This page stays open for a few minutes only; sign in again if it expires.</p>
+      For your security, changes here need a sign-in from the last 10 minutes.</p>
+    <% if (!enrolmentOnly) { %><p><a href="/home">Back to home</a></p><% } %>
     <% if (enrolmentOnly) { %>
       <p class="msg msg-error">Administrators must set up an authenticator app before they can sign in.
         After you finish, sign in again with your authenticator code.</p>

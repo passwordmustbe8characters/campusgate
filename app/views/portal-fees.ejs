@@ -1,0 +1,26 @@
+<%- include('partials/top', { title, csrfToken }) %>
+    <h1>Fees</h1>
+    <p class="msg msg-error"><strong>DEMONSTRATION DATA.</strong> These are not real University fees, and no payment can be made here.</p>
+    <p class="hint"><%= user ? user.matric_or_staff_id : '' %> · <%= level %> level</p>
+
+    <table>
+      <thead><tr><th>Item</th><th>Amount (NGN)</th></tr></thead>
+      <tbody>
+        <% items.forEach(function (i) { %><tr><td><%= i.item %></td><td><%= i.amount_naira.toLocaleString('en-NG') %></td></tr><% }) %>
+      </tbody>
+      <tfoot><tr><th>Total</th><th><%= total.toLocaleString('en-NG') %></th></tr></tfoot>
+    </table>
+
+    <form data-api="/portal/fees/invoice" data-reload novalidate>
+      <button type="submit">Generate invoice</button>
+      <p class="msg" data-message role="status" aria-live="polite"></p>
+    </form>
+
+    <% if (invoices.length > 0) { %>
+      <h2>Your recent invoices</h2>
+      <ul>
+        <% invoices.forEach(function (inv) { %><li><%= inv.reference %>: NGN <%= inv.total_naira.toLocaleString('en-NG') %></li><% }) %>
+      </ul>
+    <% } %>
+    <p><a href="/home">Back to home</a></p>
+<%- include('partials/bottom') %>
