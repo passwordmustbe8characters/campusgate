@@ -12,7 +12,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 3 | Authorization and audit logs | Done 2026-10-24 (sync audit mode; FR-Z1, L3, L4 PARTIAL until Phases 4 and 6; queue mode = future work) |
 | 4 | Sessions, token, mock portal | Done 2026-10-26 (LITE scope; branch `phase4-lite`, merged after the final full run) |
 | 5 | Peak-load core | Done 2026-10-26 (branch `phase5`; policy caching moved to Phase 8) |
-| 6 | Admin console | Not started |
+| 6 | Admin console | Done 2026-10-26 (branch `phase6`) |
 | 7 | P1 features | Not started |
 | 8 | Load, clustering, measurement | Not started |
 | 9 | Hardening and documentation | Not started |
@@ -41,19 +41,19 @@ Plain record of what has been built, which requirements it covers, decisions mad
 |---|---|
 | ~~3~~ | ~~Audit-log admin unlocks and all Phase 1/2 events~~: **done in Phase 3** (see Phase 3 section). |
 | ~~4~~ | ~~Audit events for sign-out, sign-out-everywhere and session revocation; session records (FR-L2). Protect the portal routes with `requirePermission` (FR-Z1).~~ **Done in Phase 4.** |
-| 6 | Admin console screens for the audit log: "Verify integrity" button (FR-L3), logs viewer with filters and CSV export (FR-L4), using the existing `verifyChain`, `iterateRows` and `csv` modules. Policy/role/permission editing UI calling `adminChangeService` (FR-Z5). |
+| ~~6~~ | **Done in Phase 6.** Admin console screens for the audit log: "Verify integrity" button (FR-L3), logs viewer with filters and CSV export (FR-L4), using the existing `verifyChain`, `iterateRows` and `csv` modules. Policy/role/permission editing UI calling `adminChangeService` (FR-Z5). |
 | 8 | **Measure the audit cost on the login path** (sync mode: every login waits on the chain's advisory lock). `calibrate` should report login latency/throughput with the audit write. If it is a bottleneck, the queue-mode prototype (branch `audit-queue-experimental`) is the planned remedy; Redis AOF (`appendfsync everysec`, with a volume) would then be needed and its cost measured too. |
 | 9 | A limited application database role that cannot `ALTER TABLE auth_logs DISABLE TRIGGER`: today the app connects as the table owner, who can switch the append-only triggers off (the hash chain still detects any change made that way). |
 | 9 | **Known limit of the outside anchor.** The anchor (latest seq + hash, in Redis) catches deletion of the newest rows only **until the app writes past the old anchored position**: new events link correctly to the shortened chain, and the anchor then moves forward to the new head, so the deletion is no longer visible. Run `audit verify` regularly (Phase 6 button, or a scheduled job) to narrow that window; a stronger fix is an append-only history of anchors kept outside the database (for example periodic anchors written to a file or another system). |
 | ~~4~~ | ~~**Delete the interim account ticket** and use the JWT session, with a "signed in recently" check.~~ **Done in Phase 4.** |
 | ~~4~~ | ~~FR-A10 / reset: revoke the user's **sessions** after a password reset or change.~~ **Done in Phase 4.** |
 | 9 | CSRF tokens stay bound to the pre-session cookie (not the JWT `jti`); see the Phase 4 decision. Revisit with HTTPS in Phase 9. |
-| 3/4/6 | Put `requireAdmin2FA` (`app/src/middleware/requireAdmin2FA.js`) in front of every `/admin/*` route (FR-A13). |
+| ~~3/4/6~~ | ~~Put `requireAdmin2FA` in front of every `/admin/*` route (FR-A13).~~ **Done in Phase 6.** |
 | 8 | Cache the `policies` row **with invalidation on change** (moved from Phase 5): measure the per-request read in `calibrate` first; cache only if it matters. Tests change the row directly in the database, so a cache needs cross-process invalidation. |
 | ~~5~~ | ~~Front-end exponential backoff on 429/503.~~ **Done in Phase 5.** |
 | ~~5~~ | ~~Per-IP and per-account rate limits on the sign-in and recovery endpoints.~~ **Done in Phase 5.** |
 | 5, 8 | **Email delivery in the request path** (sign-in OTP is sent inside `POST /auth/login`) is a peak-load concern: a slow SMTP server slows logins. Revisit (queue, or send after responding) and measure. |
-| 6 | Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service; a 2FA reset button calling `resetTwoFactor`; dashboard counters from `cg:metrics:*` in Redis. |
+| ~~6~~ | **Done in Phase 6.** Admin console unlock button and `/admin/users/:id/unlock`, calling the existing `unlockUser` service; a 2FA reset button calling `resetTwoFactor`; dashboard counters from `cg:metrics:*` in Redis. |
 | 7 | Enforce email verification (FR-A2); `users.email_verified` already exists and is `false` for new sign-ups. |
 | 8 | `calibrate` must include the **OTP step time** (send + verify) as well as bcrypt and DB time. |
 | 9 | Check the registration privacy notice wording against the Nigeria Data Protection Act 2023 (NFR-5), **including the Phase 3 sentence that full IP addresses are kept in the tamper-evident security log**. |
@@ -1029,3 +1029,53 @@ QUEUE_TICKET_TIMEOUT_SEC=30
 - The waiting-room page with position and estimated wait.
 - The 429 message and the automatic retry.
 - `redis-cli ZCARD cg:wr:queue` / `ZCARD cg:wr:active` during the demo.
+---
+
+## Phase 6: Admin console (2026-10-26)
+
+| Sub-step | Commit | What |
+|---|---|---|
+| 6.1 | `16265e0` | Dashboard (live SSE), users, policies, audit log screens |
+| 6.2 | (this commit) | Docs |
+
+Decisions approved by the developer: average sign-in time measured on the server; every admin change needs a sign-in from the last 10 minutes (so an admin who walks away from a signed-in computer cannot have changes made in their name); deactivate/reactivate included.
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-D1 | Done | `/admin` dashboard, updated every 2 s over server-sent events (`/admin/metrics/stream`): sign-ins, failed sign-ins and lockouts in the last minute (from the audit log), active sessions, locked accounts, waiting-room queue length and sign-ins in progress, average sign-in time. |
+| FR-D2 | Done | `/admin/users`: search by the start of an ID or email; locked-accounts list; unlock; reset 2FA; deactivate / reactivate; change role. |
+| FR-D3 | Done | `/admin/policies`: every policy field (password rules, lockout, session timeout, max sessions, waiting room incl. `queue_enabled`), applied on the next request; change history below. `require_2fa_admin` is not editable. |
+| FR-Z5 | Done | Every console change is in `policy_history` (actor `admin:<id>`) and the audit log, in the same transaction (fail closed). |
+| FR-L3 | Done | "Verify integrity" button (`POST /admin/logs/verify`), itself audited. |
+| FR-L4 | Done | `/admin/logs`: filter by event, user, dates, result, IP (latest 100 shown); CSV download of all matching rows, audited before anything is sent. |
+| FR-A6 | Done | Admin unlock from the console (and the CLI). |
+| FR-A13 | Done | Every `/admin` route requires an admin account with an authenticator app; the check reads the account from the database, so a forged role in a token is useless. |
+
+### Security rules on the console
+- Route chain: session → `requireAdmin2FA` (admin role + TOTP on, from the database) → `admin_console` permission. Changes add CSRF and the 10-minute recent sign-in.
+- Role change, 2FA reset and deactivation sign the user out everywhere (sessions revoked, `sessions_revoked` audited).
+- An admin cannot deactivate their own account or remove their own admin role (to avoid locking everyone out).
+- Log filters are validated (event type from the known list, IP pattern, real dates) before reaching the query builder, which uses bound parameters anyway.
+- New audit event: `admin_user_status` (actor, active), fail closed.
+
+### Sign-in time measurement
+`POST /auth/login` records the server time of the password step (bcrypt, lockout, audit) into a per-minute Redis bucket (`cg:metrics:login_time:<minute>`, sum and count, kept 3 minutes). The dashboard shows the average over the current and previous minute. Phase 8 uses the same figure in calibration.
+
+### Tests
+`adminConsole.test.js` (new, 16 tests): access (admin with TOTP; refused without a session, for a student, for an admin without TOTP, for an enrolment-only session, and for a student token claiming role "admin"); CSRF and recent sign-in on changes; dashboard snapshot figures (1 sign-in, 5 failures, 1 lockout, 1 session, 1 locked, 1 queued, timing > 0) and the SSE stream; user search, unlock (audited with the admin as actor), deactivate (signed out everywhere, cannot sign in) and reactivate, self-protection, role change (history, signed out), 2FA reset; policy change applies at once (lock after 3 instead of 5), history, out-of-range refused, `require_2fa_admin` not editable; audit log filter, CSV export (audited), Verify OK and then BROKEN after a direct database edit; hostile filter values.
+
+**Results:** adminConsole 16/16; login, portal, admin2fa, waitingRoom 46/46; unit 135/135 (the route-scan test now also checks that every `/admin` route needs a session and every admin change a recent sign-in).
+
+### Demo by hand
+1. Give the seeded admin an authenticator app: sign in as `ADMIN0001`, scan the QR code, confirm, sign in again with the code.
+2. Home → **Admin console**. Leave the dashboard open in one window.
+3. In another browser, sign in as a student with a wrong password 5 times: the dashboard shows the failures, 1 lockout and 1 locked account within 2 s.
+4. **Users** → unlock that student. **Policies** → set `max attempts` to 3 → the next lockout happens after 3 failures. The history table shows both changes.
+5. **Audit log** → Verify integrity (OK) → download CSV.
+
+### Evidence to capture for the report
+- The dashboard during the rush-hour demo (Phase 8).
+- The users page with a locked account, before and after unlock.
+- The policy editor and its history.
+- Verify integrity OK, and BROKEN after a direct database edit (Phase 3 tamper steps).
