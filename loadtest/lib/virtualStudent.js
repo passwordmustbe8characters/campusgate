@@ -81,13 +81,22 @@ async function runStudent({ baseUrl, identifier, password, timeoutMs, maxRetries
         rec.queued = true;
         rec.attempts -= 1; // being queued is not a failed attempt
         const q0 = Date.now();
-        await call('/queue/join', { method: 'POST', body: {}, csrf });
+        // Poll as often as the server suggests (pollSec: 3 s near the front, up to 30 s at the back).
+        const next = (r) => (r && r.json && r.json.pollSec ? r.json.pollSec * 1000 : pollMs);
+        let wait = next(await call('/queue/join', { method: 'POST', body: {}, csrf }));
         for (;;) {
           if (timeLeft() <= 0) return rec;
-          await sleep(pollMs);
-          const s = await call('/queue/status');
+          await sleep(wait);
+          let s;
+          try {
+            s = await call('/queue/status');
+          } catch (err) {
+            if (err.name === 'TimeoutError' || err.name === 'AbortError') rec.timeouts += 1;
+            continue; // a slow status check is not a reason to leave the queue
+          }
           if (s.json && s.json.state === 'admitted') break;
-          if (s.json && s.json.state === 'expired') await call('/queue/join', { method: 'POST', body: {}, csrf });
+          if (s.json && s.json.state === 'expired') s = await call('/queue/join', { method: 'POST', body: {}, csrf });
+          wait = next(s);
         }
         rec.queueWaitMs += Date.now() - q0;
         continue;

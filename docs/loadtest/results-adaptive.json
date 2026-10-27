@@ -1,0 +1,58 @@
+{
+  "measuredAt": "2026-10-27T00:01:40.698Z",
+  "timeoutMs": 10000,
+  "rampSec": 30,
+  "queue": {
+    "queue_capacity": 23,
+    "queue_batch": 15,
+    "queue_interval_sec": 2
+  },
+  "runs": [
+    {
+      "waitingRoom": "on",
+      "workers": 1,
+      "users": 500,
+      "rampSec": 30,
+      "timeoutMs": 10000,
+      "maxRetries": 3,
+      "wallSec": 110.3,
+      "succeeded": 500,
+      "failed": 0,
+      "gaveUp": 0,
+      "successRatePct": 100,
+      "signInMeanMs": 46877,
+      "signInP95Ms": 75857,
+      "loginRequestMeanMs": 1370,
+      "loginRequestP95Ms": 5193,
+      "timeouts": 0,
+      "rateLimited": 0,
+      "httpErrors": 0,
+      "queuedStudents": 477,
+      "queueWaitMeanMs": 46145,
+      "signInsPerSec": 4.53
+    },
+    {
+      "waitingRoom": "on",
+      "workers": 1,
+      "users": 1000,
+      "rampSec": 30,
+      "timeoutMs": 10000,
+      "maxRetries": 3,
+      "wallSec": 325.9,
+      "succeeded": 999,
+      "failed": 0,
+      "gaveUp": 1,
+      "successRatePct": 99.9,
+      "signInMeanMs": 190810,
+      "signInP95Ms": 296722,
+      "loginRequestMeanMs": 3112,
+      "loginRequestP95Ms": 6470,
+      "timeouts": 1467,
+      "rateLimited": 0,
+      "httpErrors": 41,
+      "queuedStudents": 994,
+      "queueWaitMeanMs": 167799,
+      "signInsPerSec": 3.07
+    }
+  ]
+}

@@ -33,6 +33,8 @@ async function main() {
   const workers = Number(process.env.EXP_WORKERS || 2);
   const rampSec = Number(process.env.EXP_RAMP_SEC || 30);
   const timeoutMs = Number(process.env.EXP_TIMEOUT_MS || 10000);
+  const modes = (process.env.EXP_MODES || 'off,on').split(',');
+  const tag = process.env.EXP_TAG ? `-${process.env.EXP_TAG}` : '';
 
   const calibration = JSON.parse(fs.readFileSync(path.join(ROOT, 'docs', 'calibration.json'), 'utf8'));
   const measured = calibration.throughput.find((t) => t.workers === workers) || calibration.throughput[0];
@@ -45,7 +47,7 @@ async function main() {
   const runs = [];
   try {
     for (const users of crowd) {
-      for (const mode of ['off', 'on']) {
+      for (const mode of modes) {
         await db('policies').update(mode === 'on' ? { queue_enabled: true, ...queue } : { queue_enabled: false });
         log(`run: waiting room ${mode.toUpperCase()}, ${users} students over ${rampSec} s...`);
         const server = await startServer({ port: 3300, workers });
@@ -54,7 +56,7 @@ async function main() {
             baseUrl: server.url, users, rampSec, timeoutMs, maxRetries: 3, giveUpMs: 10 * 60 * 1000,
             password: process.env.SEED_STUDENT_PASSWORD,
           });
-          writeCsv(path.join(DIR, `${mode}-${users}.csv`), rows);
+          writeCsv(path.join(DIR, `${mode}-${users}${tag}.csv`), rows);
           runs.push({ waitingRoom: mode, workers, ...summary });
           log(`  success ${summary.successRatePct}%  mean ${summary.signInMeanMs} ms  p95 ${summary.signInP95Ms} ms  timeouts ${summary.timeouts}`);
         } finally {
@@ -72,8 +74,8 @@ async function main() {
   fs.mkdirSync(DIR, { recursive: true });
   const cols = ['waitingRoom', 'users', 'rampSec', 'workers', 'successRatePct', 'succeeded', 'gaveUp', 'failed', 'signInMeanMs', 'signInP95Ms',
     'loginRequestMeanMs', 'loginRequestP95Ms', 'timeouts', 'queuedStudents', 'queueWaitMeanMs', 'signInsPerSec', 'wallSec'];
-  fs.writeFileSync(path.join(DIR, 'results.csv'), `${[cols.join(',')].concat(runs.map((r) => cols.map((c) => (r[c] ?? '')).join(','))).join('\n')}\n`);
-  fs.writeFileSync(path.join(DIR, 'results.json'), `${JSON.stringify({ measuredAt: new Date().toISOString(), timeoutMs, rampSec, queue, runs }, null, 2)}\n`);
+  fs.writeFileSync(path.join(DIR, `results${tag}.csv`), `${[cols.join(',')].concat(runs.map((r) => cols.map((c) => (r[c] ?? '')).join(','))).join('\n')}\n`);
+  fs.writeFileSync(path.join(DIR, `results${tag}.json`), `${JSON.stringify({ measuredAt: new Date().toISOString(), timeoutMs, rampSec, queue, runs }, null, 2)}\n`);
   console.log(JSON.stringify(runs, null, 2));
 }
 

@@ -14,7 +14,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | 5 | Peak-load core | Done 2026-10-26 (branch `phase5`; policy caching moved to Phase 8) |
 | 6 | Admin console | Done 2026-10-26 (branch `phase6`) |
 | 7 | P1 features | Done 2026-10-27 (branch `phase7`) |
-| 8 | Load, clustering, measurement | Not started |
+| 8 | Load, clustering, measurement | Done 2026-10-27 (branch `phase8`) |
 | 9 | Hardening and documentation | Not started |
 | 10 | FreeRADIUS | Not started |
 
@@ -49,7 +49,7 @@ Plain record of what has been built, which requirements it covers, decisions mad
 | ~~4~~ | ~~FR-A10 / reset: revoke the user's **sessions** after a password reset or change.~~ **Done in Phase 4.** |
 | 9 | CSRF tokens stay bound to the pre-session cookie (not the JWT `jti`); see the Phase 4 decision. Revisit with HTTPS in Phase 9. |
 | ~~3/4/6~~ | ~~Put `requireAdmin2FA` in front of every `/admin/*` route (FR-A13).~~ **Done in Phase 6.** |
-| 8 | Cache the `policies` row **with invalidation on change** (moved from Phase 5): measure the per-request read in `calibrate` first; cache only if it matters. Tests change the row directly in the database, so a cache needs cross-process invalidation. |
+| ~~8~~ | **Decided in Phase 8: not needed.** Measured policy read 1.5 ms median vs. 192 ms bcrypt (under 1% of a sign-in). Cache the `policies` row **with invalidation on change** (moved from Phase 5): measure the per-request read in `calibrate` first; cache only if it matters. Tests change the row directly in the database, so a cache needs cross-process invalidation. |
 | ~~5~~ | ~~Front-end exponential backoff on 429/503.~~ **Done in Phase 5.** |
 | ~~5~~ | ~~Per-IP and per-account rate limits on the sign-in and recovery endpoints.~~ **Done in Phase 5.** |
 | 5, 8 | **Email delivery in the request path** (sign-in OTP is sent inside `POST /auth/login`) is a peak-load concern: a slow SMTP server slows logins. Revisit (queue, or send after responding) and measure. |
@@ -1128,3 +1128,79 @@ The app sends mail over SMTP, so Gmail works with configuration only (tested 202
 4. Admin → Vouchers: create one for Hostel, 2 hours; open `/voucher` in a private window and enter it.
 5. Fees → Generate invoice → Pay (demo): enter the emailed code.
 6. Five wrong passwords on one account → Admin → Suspicious activity.
+---
+
+## Phase 8: Load, clustering, measurement (2026-10-27)
+
+| Sub-step | Commit | What |
+|---|---|---|
+| 8.1 | `dd63e4b` | `CLUSTER_WORKERS`, virtual-student load generator, `calibrate`, experiments script, "Simulate rush hour" button |
+| 8.2 | `3d848a1` | Calibration results |
+| 8.3 | (this commit) | Adaptive waiting-room polling, experiment results, docs |
+
+Decisions approved by the developer: own Node load generator (no new packages); 200/500/1,000 students, waiting room off vs. on; per-IP limit lifted only for test runs (all virtual students share one IP); the button is refused in production.
+
+### Requirements covered
+| ID | Status | Notes |
+|---|---|---|
+| FR-P7 | Done | `CLUSTER_WORKERS=N` forks N processes sharing the port; shared state is in Redis; a dead worker is replaced. Measured below. |
+| FR-P8 | Done | `loadtest/`: virtual students do real HTTP (sign-in page + CSRF token, sign-in, waiting room join and polling, `Retry-After`, impatient retry after a 10 s timeout, then `/home`). Admin "Simulate rush hour" runs it in a separate process (one run at a time, refused in production, audited); its one-time token lifts only the per-IP limit for its own requests. |
+| NFR-7 | Done | `docs/calibration.json`, `docs/loadtest/*.csv`. Targets were set only after measuring. |
+
+### Calibration (`npm run calibrate`, inside the app container, 2026-10-26 23:13 UTC)
+Machine: Intel Core i7-6600U, 4 logical CPUs, 8 GB available to Docker (WSL2), Node 24.21.0, bcrypt cost 10, `UV_THREADPOOL_SIZE=4`, audit in sync mode.
+
+| Measurement | Median | p95 |
+|---|---|---|
+| bcrypt compare (one password check) | 191.6 ms | 210.3 ms |
+| Sign-in database lookup | 1.7 ms | 9.4 ms |
+| Policy row read | 1.5 ms | 8.8 ms |
+| Audit-chain write (sync, under the lock; rolled back) | 13.9 ms | 25.3 ms |
+| OTP issue incl. email to Mailpit | 87.1 ms | 190.5 ms |
+| OTP verify | 20.2 ms | 39.8 ms |
+
+| Throughput: 200 students in 10 s, waiting room off | 1 worker | 2 workers | 4 workers |
+|---|---|---|---|
+| Sign-ins per second | **7.46** | 3.37 | 6.39 |
+| Success | 100% | 100% | 100% |
+| Mean / p95 time to sign in | 17.5 / 20.6 s | 49.9 / 54.2 s | 23.1 / 26.6 s |
+| Client timeouts (30 s) | 0 | 188 | 0 |
+
+**Findings.** (1) Sign-in is CPU-bound by bcrypt; the other steps add about 20 ms. (2) On 4 cores, more processes do **not** add capacity: one process already keeps 4 bcrypt threads busy, extra processes only compete for the same cores (and the generator runs on the same machine). The 2-worker run fell into a retry storm (timeouts → retries → more load); background load on the laptop varies between runs, so the worker comparison is indicative. More workers help only with more cores (OMNeT++ E2). (3) **Policy caching is not needed:** the read costs under 1% of a sign-in (open item closed). (4) The sync audit write (14 ms, serialized) allows roughly 70 writes/s, well above the 7.5 sign-ins/s ceiling, so queue mode is not needed at this scale.
+
+### Baseline vs. proposed (`npm run loadtest:experiments`, 1 worker, students arrive over 30 s, 10 s patience, up to 3 retries)
+Waiting room sized from the measured 7.46/s: `queue_capacity=23`, `queue_batch=15`, `queue_interval_sec=2`.
+
+| Students | Waiting room OFF | ON, first version (3 s polling) | ON, adaptive polling |
+|---|---|---|---|
+| 200 | **100%**, mean 2.7 s, p95 5.0 s | 100%, mean 7.2 s, p95 10.5 s | – |
+| 500 | **0.6%** (3), 1,988 timeouts | **100%**, mean 56.7 s, p95 89.2 s, 6 timeouts | **100%**, mean 46.9 s, p95 75.9 s, 0 timeouts |
+| 1,000 | **0%**, 5,004 timeouts | 70.2%, mean 305 s, 298 gave up after 10 min | **99.9%** (999), mean 190.8 s, p95 296.7 s, 1 gave up |
+
+**Findings.**
+- **Without admission control the system collapses** once arrivals exceed capacity: requests queue inside the server, pass the students' 10-second patience, are retried, and the server spends its capacity on requests nobody waits for: 0.6% and 0% success.
+- **With the waiting room nearly everyone gets in**, at the server's real pace: they wait in order (about 47 s for 500, 3 minutes for 1,000) instead of failing.
+- **At light load the waiting room only costs time** (200 students: 7.2 s vs. 2.7 s): it is a safety net for overload, not a speed-up.
+- **Found and fixed by measurement:** with 1,000 queued students polling every 3 s (~330 status requests/s), the status checks themselves slowed sign-in (throughput fell to about 2.3/s). The server now suggests the polling interval (`pollSec` = a quarter of the estimated wait, 3–30 s); the page and the virtual students follow it. In the first version the generator also left the queue when one status check timed out (a real browser would not); fixed. After both fixes: 70.2% → 99.9% at 1,000 students.
+
+Files: `docs/loadtest/results.csv` (first run, off and on), `docs/loadtest/results-adaptive.csv` (ON re-run), `off-*.csv`, `on-*.csv`, `on-*-adaptive.csv` (one line per student), `calibrate-*w.csv`.
+
+### Validation inputs for OMNeT++ (developer)
+Service time per sign-in ≈ 192 ms bcrypt + ~20 ms other work; one process ≈ 7.5 sign-ins/s on this machine; client timeout 10 s with up to 3 retries; waiting room capacity 23, batch 15 per 2 s. Compare simulated success rate and mean/p95 time with the table above at 200, 500 and 1,000 students (E1).
+
+### Tests
+`loadGenerator.test.js` (new): off → every virtual student signs in; on with capacity 1 → queued, admitted, all in; wrong passwords reported as failed; summary maths and CSV; the simulator is refused in production and for bad sizes, runs in its own process one run at a time and records a summary; its token lifts the per-IP limit and a forged token does not. Plus waitingRoom, adminConsole, rateLimit and unit tests after each change.
+
+### Commands
+```bash
+# inside Docker (the app container has the code; docs/ is mounted so results land in the repo)
+docker compose run --rm -v "./docs:/usr/src/app/docs" app npm run calibrate
+docker compose run --rm -v "./docs:/usr/src/app/docs" -e EXP_USERS=200,500,1000 -e EXP_WORKERS=1 app npm run loadtest:experiments
+# against a running system (its RATE_LIMIT_IP_PER_MIN must allow it)
+npm run loadtest -- --url http://localhost:3000 --users 300 --ramp 30 --out docs/loadtest/manual.csv
+```
+
+### Evidence to capture for the report
+- The dashboard during a "Simulate rush hour" run with the waiting room ON (queue length rising and draining).
+- The comparison table above as a bar chart (success rate off vs. on).
+- `docs/calibration.json`.

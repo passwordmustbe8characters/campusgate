@@ -1,0 +1,7 @@
+waitingRoom,users,rampSec,workers,successRatePct,succeeded,gaveUp,failed,signInMeanMs,signInP95Ms,loginRequestMeanMs,loginRequestP95Ms,timeouts,queuedStudents,queueWaitMeanMs,signInsPerSec,wallSec
+off,200,30,1,100,200,0,0,2686,5010,2654,4935,0,0,,6.64,30.1
+on,200,30,1,100,200,0,0,7234,10464,855,3041,0,168,6705,4.74,42.2
+off,500,30,1,0.6,3,497,0,7581,8953,7551,8941,1988,0,,0.04,83
+on,500,30,1,100,500,0,0,56675,89204,1629,4681,6,477,55769,4.06,123.3
+off,1000,30,1,0,0,1000,0,,,,,5004,0,,0,155
+on,1000,30,1,70.2,702,298,0,304583,382972,2063,7913,6998,986,105764,1.76,399.2
