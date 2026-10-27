@@ -13,7 +13,7 @@ const SECOND_FACTOR_METHODS = ['email', 'totp'];
 function pagesRouter({ db, csrf, requireAccountOrEnrolment, settingsService }) {
   const router = express.Router();
 
-  router.get('/', (req, res) => res.redirect('/login'));
+  router.get('/', (req, res) => res.render('landing', { title: 'CampusGate' }));
 
   router.get('/login', csrf.ensurePreSession, (req, res) => {
     res.render('login', {

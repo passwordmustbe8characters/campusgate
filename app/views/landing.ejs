@@ -1,0 +1,624 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CampusGate — Secure University Access</title>
+  <link rel="stylesheet" href="/public/css/landing.css">
+</head>
+<body class="cg-body">
+
+  <!-- ══════════════════════════════════════════════════════
+       FLOATING MINIMALIST NAV (ScreenTune Style)
+  ═══════════════════════════════════════════════════════ -->
+  <header class="cg-header">
+    <nav class="cg-nav" aria-label="Site navigation">
+      <a class="cg-brand" href="/">
+        <span class="cg-brand-badge" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </span>
+        <span class="cg-brand-name">CampusGate</span>
+      </a>
+
+      <ul class="cg-nav-links">
+        <li><a href="#studio">Interactive Studio</a></li>
+        <li><a href="#layers">5-Layer Flow</a></li>
+        <li><a href="#audit">Audit Chain</a></li>
+        <li><a href="#benchmarks">Benchmarks</a></li>
+      </ul>
+
+      <div class="cg-nav-actions">
+        <span class="cg-health-pill" id="health-pill" title="Live /health endpoint telemetry">
+          <span class="cg-status-dot" id="health-dot"></span>
+          <span id="health-text">PG 7.5ms · Redis 6.2ms</span>
+        </span>
+        <a class="cg-link-signin" href="/login">Sign in</a>
+        <a class="cg-btn-pill-sm" href="/register">Get started</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <!-- ══════════════════════════════════════════════════════
+         CENTERED EDITORIAL HERO
+    ═══════════════════════════════════════════════════════ -->
+    <section class="cg-hero" aria-labelledby="hero-heading">
+      <div class="cg-hero-copy">
+        <div class="cg-eyebrow-pill cg-hero-anim cg-delay-1">
+          <span class="cg-eyebrow-dot"></span>
+          B.Sc. Computer Science Project · UNN 2026
+        </div>
+
+        <h1 id="hero-heading" class="cg-hero-title cg-hero-anim cg-delay-2">
+          Secure at the gate,<br>reachable at rush hour.
+        </h1>
+
+        <p class="cg-hero-sub cg-hero-anim cg-delay-3">
+          Centralised Authentication, Authorisation, and Accounting (AAA) for the University of Nigeria, Nsukka — engineered with admission control so fees, hostel, and course registration stay open under flash-crowd load.
+        </p>
+
+        <div class="cg-hero-actions cg-hero-anim cg-delay-4">
+          <a class="cg-btn-charcoal" href="/login">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+              <path d="M7 11V7a5 5 0 0110 0v4"/>
+            </svg>
+            Sign in to Portal
+          </a>
+          <a class="cg-btn-ghost" href="/register">Create student account</a>
+        </div>
+
+        <p class="cg-hero-caption cg-hero-anim cg-delay-5">
+          131 unit &amp; 160 integration tests passing · Bcrypt cost-10 · Tamper-evident HMAC audit log
+        </p>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════
+           DARK STUDIO SHOWCASE WINDOW (ScreenTune Centerpiece)
+      ═══════════════════════════════════════════════════════ -->
+      <div class="cg-studio-outer cg-hero-anim cg-delay-6" id="studio">
+        <div class="cg-studio-glow" aria-hidden="true"></div>
+
+        <div class="cg-studio-window" role="region" aria-label="Interactive CampusGate Architecture Studio">
+          <!-- Window Top Bar -->
+          <div class="cg-window-bar">
+            <div class="cg-window-dots" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <div class="cg-window-tabs" role="tablist" aria-label="Portal state preview">
+              <button type="button" class="cg-wtab active" data-view="queue" role="tab" aria-selected="true">
+                1. Waiting Room
+              </button>
+              <button type="button" class="cg-wtab" data-view="login" role="tab" aria-selected="false">
+                2. Password &amp; Lockout
+              </button>
+              <button type="button" class="cg-wtab" data-view="mfa" role="tab" aria-selected="false">
+                3. 2FA Step-Up
+              </button>
+              <button type="button" class="cg-wtab" data-view="portal" role="tab" aria-selected="false">
+                4. Login-Once Portal
+              </button>
+            </div>
+            <div class="cg-window-meta">
+              <span class="cg-mono-tag" id="studio-mode-tag">ADMISSION CONTROL: ON</span>
+            </div>
+          </div>
+
+          <!-- Studio Split Body: Left Light Canvas + Right Dark Inspector -->
+          <div class="cg-studio-body">
+
+            <!-- LEFT: Light Student Browser Canvas -->
+            <div class="cg-canvas-stage">
+              <div class="cg-browser-card">
+                <div class="cg-browser-urlbar">
+                  <span class="cg-lock-icon" aria-hidden="true">🔒</span>
+                  <span class="cg-url-text" id="canvas-url">https://campusgate.unn.edu.ng/queue/status?ticket=cg_9f8a...</span>
+                  <span class="cg-badge-footprint">2 KB CSS · 3 KB JS</span>
+                </div>
+
+                <!-- VIEW 1: WAITING ROOM -->
+                <div class="cg-view active" id="view-queue">
+                  <div class="cg-view-header">
+                    <span class="cg-chip cg-chip-amber" id="queue-chip">FIFO Admission Control Active</span>
+                    <h3>Hostel &amp; Fees Rush-Hour Queue</h3>
+                    <p>More students are signing in than the server can hash at once. You are held in an orderly Redis queue instead of timing out.</p>
+                  </div>
+
+                  <div class="cg-queue-metrics">
+                    <div class="cg-qbox">
+                      <span class="cg-qlabel">Your Queue Position</span>
+                      <strong class="cg-qval" id="q-pos">#42</strong>
+                      <span class="cg-qsub">of <span id="q-total">1,850</span> arriving</span>
+                    </div>
+                    <div class="cg-qbox">
+                      <span class="cg-qlabel">Estimated Wait</span>
+                      <strong class="cg-qval" id="q-wait">~15s</strong>
+                      <span class="cg-qsub">Batch: 50 every 5s</span>
+                    </div>
+                    <div class="cg-qbox">
+                      <span class="cg-qlabel">Ticket Signature</span>
+                      <strong class="cg-qval cg-mono-sm">HMAC-256</strong>
+                      <span class="cg-qsub">Auto-expires if closed</span>
+                    </div>
+                  </div>
+
+                  <div class="cg-progress-wrap">
+                    <div class="cg-progress-labels">
+                      <span id="q-status-msg">Admitting batch in progress...</span>
+                      <span class="cg-mono-sm" id="q-pct">72%</span>
+                    </div>
+                    <div class="cg-progress-track">
+                      <div class="cg-progress-fill" id="q-bar"></div>
+                    </div>
+                  </div>
+
+                  <div class="cg-view-footer">
+                    <button type="button" class="cg-canvas-btn" id="btn-advance-queue">
+                      Simulate Next Batch Admission →
+                    </button>
+                    <span class="cg-footnote">Staff &amp; Administrators bypass waiting room automatically.</span>
+                  </div>
+                </div>
+
+                <!-- VIEW 2: PASSWORD & ANTI-ENUMERATION GATE -->
+                <div class="cg-view" id="view-login">
+                  <div class="cg-view-header">
+                    <span class="cg-chip cg-chip-slate">Layer 2 &amp; 3 · Bcrypt Cost-10 + Fair Lockout</span>
+                    <h3>Sign in to CampusGate</h3>
+                    <p>Every failure path executes exactly 1 bcrypt check (~142 ms) and returns a byte-identical HTTP 401 message.</p>
+                  </div>
+
+                  <div class="cg-mock-form">
+                    <div class="cg-field-row">
+                      <label>Matric Number / Email</label>
+                      <input type="text" id="sim-matric" value="SCI/2025/0061" readonly>
+                    </div>
+                    <div class="cg-field-row">
+                      <label>Password Check Simulator</label>
+                      <div class="cg-sim-btn-group">
+                        <button type="button" class="cg-sim-btn" data-login-action="wrong">
+                          Wrong Password (+1 Fail)
+                        </button>
+                        <button type="button" class="cg-sim-btn" data-login-action="unknown">
+                          Unknown Matric (Dummy Hash)
+                        </button>
+                        <button type="button" class="cg-sim-btn cg-sim-btn-warn" data-login-action="timeout">
+                          Server HTTP 503 (+0 Fail)
+                        </button>
+                        <button type="button" class="cg-sim-btn cg-sim-btn-ok" data-login-action="correct">
+                          Correct Password ✓
+                        </button>
+                      </div>
+                    </div>
+
+                    <div class="cg-login-feedback" id="login-feedback">
+                      <div class="cg-fb-top">
+                        <span class="cg-mono-sm" id="fb-status">READY · failed_attempts = 0 / 5</span>
+                        <span class="cg-mono-sm" id="fb-timing">bcrypt: 142.4 ms (cost 10)</span>
+                      </div>
+                      <p class="cg-fb-msg" id="fb-msg">
+                        Click a button above to test atomic failure counting, dummy-hash anti-enumeration, or FR-P5 timeout fairness.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- VIEW 3: SECOND FACTOR (EMAIL OTP / TOTP) -->
+                <div class="cg-view" id="view-mfa">
+                  <div class="cg-view-header">
+                    <span class="cg-chip cg-chip-emerald">Layer 4 · Pre-Auth Ticket (256-bit HttpOnly)</span>
+                    <h3>Two-Step Verification</h3>
+                    <p>Password failure counter is only reset after the second factor succeeds. Codes are stored hashed with HMAC-SHA256.</p>
+                  </div>
+
+                  <div class="cg-mfa-box">
+                    <div class="cg-mfa-methods">
+                      <div class="cg-mfa-card active" id="mfa-card-otp">
+                        <strong>Email One-Time Code</strong>
+                        <span>6 digits · 5-min TTL · Max 3 atomic attempts</span>
+                        <code>HMAC-SHA256(key, "otp:" + uid + ":" + code)</code>
+                      </div>
+                      <div class="cg-mfa-card" id="mfa-card-totp">
+                        <strong>Authenticator App (TOTP)</strong>
+                        <span>RFC 6238 · ±1 step drift · Replay blocked</span>
+                        <code>AES-256-GCM encrypted secret + 8 backup codes</code>
+                      </div>
+                    </div>
+
+                    <div class="cg-otp-digits" aria-label="Sample 6 digit code">
+                      <span>4</span><span>8</span><span>2</span><span>9</span><span>1</span><span>6</span>
+                    </div>
+
+                    <div class="cg-view-footer">
+                      <button type="button" class="cg-canvas-btn" id="btn-verify-mfa">
+                        Verify Code &amp; Issue Signed JWT →
+                      </button>
+                      <a href="/verify" class="cg-inline-link">Open real /verify page</a>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- VIEW 4: LOGIN-ONCE PORTAL SERVICES -->
+                <div class="cg-view" id="view-portal">
+                  <div class="cg-view-header">
+                    <span class="cg-chip cg-chip-emerald">Layer 5 · Login-Once JWT Session (0 DB Queries)</span>
+                    <h3>UNN Student Portal Services</h3>
+                    <p>Each service verifies the signed JWT cookie, checks Redis <code>jti</code> revocation, and reads in-memory RBAC permissions without hitting PostgreSQL.</p>
+                  </div>
+
+                  <div class="cg-portal-grid">
+                    <a href="/portal/fees" class="cg-pservice-card">
+                      <div class="cg-pservice-top">
+                        <strong>School Fees Payment</strong>
+                        <span class="cg-pbadge">0 DB Queries</span>
+                      </div>
+                      <p>Verify session via JWT + step-up OTP confirmation before mock payment execution.</p>
+                      <span class="cg-plink">Open /portal/fees →</span>
+                    </a>
+
+                    <a href="/portal/hostel" class="cg-pservice-card">
+                      <div class="cg-pservice-top">
+                        <strong>Hostel Allocation</strong>
+                        <span class="cg-pbadge">0 DB Queries</span>
+                      </div>
+                      <p>Protected by faculty/level access windows and login-once token verification.</p>
+                      <span class="cg-plink">Open /portal/hostel →</span>
+                    </a>
+
+                    <a href="/portal/registration" class="cg-pservice-card">
+                      <div class="cg-pservice-top">
+                        <strong>Course Registration</strong>
+                        <span class="cg-pbadge">0 DB Queries</span>
+                      </div>
+                      <p>Instant course registration access with immediate Redis token revocation on logout.</p>
+                      <span class="cg-plink">Open /portal/registration →</span>
+                    </a>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- RIGHT: Dark Studio Inspector Sidebar -->
+            <aside class="cg-inspector" aria-label="Rush-hour load and policy controls">
+              <div class="cg-insp-section">
+                <div class="cg-insp-title">
+                  <span>Rush-Hour Traffic Simulator</span>
+                  <span class="cg-insp-pill" id="insp-load-label">1,850 Users</span>
+                </div>
+
+                <label class="cg-slider-label" for="load-slider">
+                  Concurrent Portal Arrivals (Flash Crowd)
+                </label>
+                <input type="range" id="load-slider" class="cg-slider" min="100" max="5000" step="50" value="1850">
+                <div class="cg-slider-ticks">
+                  <span>100 (Quiet)</span>
+                  <span>2,500 (Fees)</span>
+                  <span>5,000 (Hostel Rush)</span>
+                </div>
+              </div>
+
+              <div class="cg-insp-section">
+                <div class="cg-insp-title">
+                  <span>Admission Control Mode</span>
+                </div>
+                <div class="cg-mode-switch" role="group" aria-label="Toggle waiting room">
+                  <button type="button" class="cg-mode-btn active" id="mode-on" data-waiting="on">
+                    Waiting Room ON
+                  </button>
+                  <button type="button" class="cg-mode-btn" id="mode-off" data-waiting="off">
+                    OFF (Baseline)
+                  </button>
+                </div>
+              </div>
+
+              <div class="cg-insp-section">
+                <div class="cg-insp-title">
+                  <span>Live Telemetry (Calibrated)</span>
+                </div>
+
+                <div class="cg-metric-list">
+                  <div class="cg-metric-item">
+                    <div class="cg-metric-row">
+                      <span>Sign-In Success Rate</span>
+                      <strong class="cg-mono-val cg-text-emerald" id="m-success">99.4%</strong>
+                    </div>
+                    <div class="cg-mbar"><div class="cg-mbar-fill" id="m-success-bar" style="width: 99%"></div></div>
+                  </div>
+
+                  <div class="cg-metric-item">
+                    <div class="cg-metric-row">
+                      <span>95th-Pct Sign-In Time</span>
+                      <strong class="cg-mono-val" id="m-latency">193.3 ms</strong>
+                    </div>
+                    <span class="cg-metric-note" id="m-latency-note">Bcrypt cost-10 bound (~19 hashes/s)</span>
+                  </div>
+
+                  <div class="cg-metric-item">
+                    <div class="cg-metric-row">
+                      <span>Unfair Timeout Lockouts</span>
+                      <strong class="cg-mono-val cg-text-emerald" id="m-unfair">0 students</strong>
+                    </div>
+                    <span class="cg-metric-note">FR-P5: HTTP 500/503 never counted</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cg-insp-footer">
+                <button type="button" class="cg-insp-reset" id="btn-reset-sim">
+                  Reset Studio State
+                </button>
+              </div>
+            </aside>
+
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════
+         SECTION 2: 5-LAYER AUTHENTICATION PIPELINE
+    ═══════════════════════════════════════════════════════ -->
+    <section class="cg-section" id="layers" aria-labelledby="layers-heading">
+      <div class="cg-container">
+        <div class="cg-section-head cg-reveal">
+          <h2 id="layers-heading">Five sequential layers before a session token is issued.</h2>
+          <p>Click any layer below to inspect how CampusGate balances cryptographic strength with rush-hour availability.</p>
+        </div>
+
+        <div class="cg-layers-layout cg-reveal">
+          <div class="cg-layer-steps" role="tablist" aria-label="Authentication layers">
+            <button type="button" class="cg-layer-btn active" data-layer="1" role="tab" aria-selected="true">
+              <span class="cg-layer-num">01</span>
+              <div class="cg-layer-info">
+                <strong>Admission Control &amp; Rate Limiting</strong>
+                <span>Redis IP/account counters + signed FIFO waiting-room tickets</span>
+              </div>
+            </button>
+
+            <button type="button" class="cg-layer-btn" data-layer="2" role="tab" aria-selected="false">
+              <span class="cg-layer-num">02</span>
+              <div class="cg-layer-info">
+                <strong>Bcrypt Cost-10 &amp; Anti-Enumeration</strong>
+                <span>Dummy-hash comparison guarantees identical timing and HTTP 401 replies</span>
+              </div>
+            </button>
+
+            <button type="button" class="cg-layer-btn" data-layer="3" role="tab" aria-selected="false">
+              <span class="cg-layer-num">03</span>
+              <div class="cg-layer-info">
+                <strong>Fair Atomic Temporary Lockout</strong>
+                <span>Locks for 15 mins at 5 bad passwords; ignores server timeouts (FR-P5)</span>
+              </div>
+            </button>
+
+            <button type="button" class="cg-layer-btn" data-layer="4" role="tab" aria-selected="false">
+              <span class="cg-layer-num">04</span>
+              <div class="cg-layer-info">
+                <strong>Second Factor (Email OTP &amp; TOTP)</strong>
+                <span>HMAC-SHA256 codes (max 3 tries) &amp; AES-256-GCM authenticator secrets</span>
+              </div>
+            </button>
+
+            <button type="button" class="cg-layer-btn" data-layer="5" role="tab" aria-selected="false">
+              <span class="cg-layer-num">05</span>
+              <div class="cg-layer-info">
+                <strong>Login-Once JWT &amp; RBAC Authorisation</strong>
+                <span>HttpOnly cookie verified across Fees, Hostel &amp; Reg with 0 DB lookups</span>
+              </div>
+            </button>
+          </div>
+
+          <div class="cg-layer-detail-card" id="layer-detail">
+            <div class="cg-layer-content-inner" id="layer-content-inner">
+              <div class="cg-code-header">
+                <span class="cg-code-title" id="layer-code-title">Layer 1 — Redis Rate Limiter &amp; Waiting Room Queue</span>
+                <span class="cg-code-badge" id="layer-code-req">FR-P2 · FR-P4</span>
+              </div>
+              <p class="cg-layer-desc" id="layer-desc">
+                Before any CPU-expensive bcrypt hash is computed, CampusGate checks capacity in Redis. Clients exceeding rate limits receive HTTP 429 with Retry-After exponential backoff, while flash crowds receive a signed FIFO queue ticket and are admitted in orderly batches.
+              </p>
+              <pre class="cg-code-block"><code id="layer-code">// Layer 1: Admission check before password hashing
+// Overloaded arrivals receive a signed waiting-room ticket
+// Staff and administrators bypass the queue automatically.
+if (activeSignIns >= policy.queue_capacity && !user.isStaffOrAdmin) {
+  const ticket = await waitingRoom.join(req.ip);
+  return res.status(202).json({
+    status: 'queued',
+    position: ticket.position,
+    estimatedWaitSec: ticket.estimatedWaitSec,
+  });
+}</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════
+         SECTION 3: INTERACTIVE TAMPER-EVIDENT AUDIT CHAIN
+    ═══════════════════════════════════════════════════════ -->
+    <section class="cg-section cg-section-alt" id="audit" aria-labelledby="audit-heading">
+      <div class="cg-container">
+        <div class="cg-section-head cg-reveal">
+          <h2 id="audit-heading">Tamper-Evident HMAC-SHA256 Audit Chain</h2>
+          <p>
+            Even if a database insider disables PostgreSQL append-only triggers and edits <code>auth_logs</code> directly, every modification breaks the keyed hash chain and is caught by <code>npm run audit -- verify</code>.
+          </p>
+        </div>
+
+        <div class="cg-audit-controls cg-reveal" role="group" aria-label="Simulate database tampering">
+          <button type="button" class="cg-tamper-btn" data-tamper="edit2">
+            Edit Row 2 Content
+          </button>
+          <button type="button" class="cg-tamper-btn" data-tamper="delete3">
+            Delete Row 3 (Gap)
+          </button>
+          <button type="button" class="cg-tamper-btn" data-tamper="swap23">
+            Swap Rows 2 &amp; 3
+          </button>
+          <button type="button" class="cg-tamper-btn" data-tamper="truncTail">
+            Delete Newest Row (Tail)
+          </button>
+          <button type="button" class="cg-tamper-btn cg-tamper-reset" data-tamper="reset">
+            Restore Intact Chain ✓
+          </button>
+        </div>
+
+        <!-- Visual Hash Chain Blocks -->
+        <div class="cg-chain-grid cg-reveal" id="audit-chain-grid">
+          <div class="cg-chain-block" id="block-1">
+            <div class="cg-block-head">
+              <span class="cg-seq-badge">seq #1</span>
+              <span class="cg-event-tag">login_failure</span>
+            </div>
+            <div class="cg-block-body">
+              <div><small>subject:</small> <code>SCI/2025/0061</code></div>
+              <div><small>success:</small> <code>false (bad_password)</code></div>
+              <div><small>prev_hash:</small> <code>genesis</code></div>
+              <div><small>row_hash:</small> <code>H1 = 9a4f...c81e</code></div>
+            </div>
+          </div>
+
+          <div class="cg-chain-block" id="block-2">
+            <div class="cg-block-head">
+              <span class="cg-seq-badge" id="b2-seq">seq #2</span>
+              <span class="cg-event-tag" id="b2-event">login_failure</span>
+            </div>
+            <div class="cg-block-body">
+              <div><small>subject:</small> <code>SCI/2025/0061</code></div>
+              <div><small>success:</small> <code id="b2-success">false (bad_password)</code></div>
+              <div><small>prev_hash:</small> <code id="b2-prev">H1 (9a4f...c81e)</code></div>
+              <div><small>row_hash:</small> <code id="b2-row">H2 = 3d7b...e04a</code></div>
+            </div>
+          </div>
+
+          <div class="cg-chain-block" id="block-3">
+            <div class="cg-block-head">
+              <span class="cg-seq-badge" id="b3-seq">seq #3</span>
+              <span class="cg-event-tag" id="b3-event">otp_verified</span>
+            </div>
+            <div class="cg-block-body">
+              <div><small>subject:</small> <code>SCI/2025/0061</code></div>
+              <div><small>success:</small> <code>true (email_otp)</code></div>
+              <div><small>prev_hash:</small> <code id="b3-prev">H2 (3d7b...e04a)</code></div>
+              <div><small>row_hash:</small> <code id="b3-row">H3 = 7c12...b99f</code></div>
+            </div>
+          </div>
+
+          <div class="cg-chain-block" id="block-4">
+            <div class="cg-block-head">
+              <span class="cg-seq-badge">seq #4</span>
+              <span class="cg-event-tag">login_success</span>
+            </div>
+            <div class="cg-block-body">
+              <div><small>subject:</small> <code>SCI/2025/0061</code></div>
+              <div><small>success:</small> <code>true (jwt_issued)</code></div>
+              <div><small>prev_hash:</small> <code>H3 (7c12...b99f)</code></div>
+              <div><small>row_hash:</small> <code>H4 = e510...44d2 (Redis Anchor)</code></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CLI Verification Output Bar -->
+        <div class="cg-cli-bar cg-reveal" id="audit-cli-bar">
+          <span class="cg-cli-prompt">$ npm run audit -- verify</span>
+          <span class="cg-cli-output cg-cli-ok" id="audit-cli-output">
+            OK: the chain is intact up to seq 4 (Redis anchor matches H4 · Verified at 14,800 rows/sec).
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ══════════════════════════════════════════════════════
+         SECTION 4: EMPIRICAL BENCHMARKS & OMNeT++ STUDY
+    ═══════════════════════════════════════════════════════ -->
+    <section class="cg-section" id="benchmarks" aria-labelledby="bench-heading">
+      <div class="cg-container">
+        <div class="cg-section-head cg-reveal">
+          <h2 id="bench-heading">Measured on real hardware, verified against real databases.</h2>
+          <p>All tests and timing benchmarks were executed inside Docker containers on a 4-thread Intel Core i7-6600U (16 GB RAM) with PostgreSQL 17, Redis 8, and Mailpit.</p>
+        </div>
+
+        <div class="cg-bento-grid cg-reveal">
+          <div class="cg-bento-card">
+            <span class="cg-bento-label">Automated Test Suite</span>
+            <strong class="cg-bento-stat">291 / 291</strong>
+            <p><strong>131 unit tests</strong> and <strong>160 integration tests</strong> passing against live PostgreSQL, Redis, and Mailpit containers (331s full run).</p>
+          </div>
+
+          <div class="cg-bento-card">
+            <span class="cg-bento-label">Bcrypt Cost-10 Latency</span>
+            <strong class="cg-bento-stat">115–165 ms</strong>
+            <p>Median password verification time (~19 hashes/sec on 4 threads), proving why admission control is mandatory during rush hour.</p>
+          </div>
+
+          <div class="cg-bento-card">
+            <span class="cg-bento-label">Audit Chain Throughput</span>
+            <strong class="cg-bento-stat">14,800 / sec</strong>
+            <p>Verifies 20,000 HMAC-chained rows in <strong>1,353 ms</strong> with constant memory use and zero sensitive data leakage.</p>
+          </div>
+
+          <div class="cg-bento-card">
+            <span class="cg-bento-label">Concurrency Precision</span>
+            <strong class="cg-bento-stat">100% Exact</strong>
+            <p>Under 10 simultaneous wrong passwords, atomic SQL updates record <strong>exactly 5 failures and 1 lock</strong>; single-use OTPs never replay.</p>
+          </div>
+        </div>
+
+        <!-- Existing Working Prototype + OMNeT++ Simulation Summary -->
+        <div class="cg-dual-cards cg-reveal">
+          <div class="cg-info-card">
+            <h3>Jump into the working prototype</h3>
+            <p>All authentication, recovery, portal services, and administrator interfaces are wired up and running in this Express + PostgreSQL + Redis instance:</p>
+            <div class="cg-route-pills">
+              <a href="/login">/login</a>
+              <a href="/register">/register</a>
+              <a href="/forgot-password">/forgot-password</a>
+              <a href="/verify">/verify</a>
+              <a href="/portal/fees">/portal/fees</a>
+              <a href="/portal/hostel">/portal/hostel</a>
+              <a href="/portal/registration">/portal/registration</a>
+              <a href="/health">/health</a>
+            </div>
+          </div>
+
+          <div class="cg-info-card">
+            <h3>Rush-Hour Flash-Crowd Experiments</h3>
+            <p>Evaluated across 10 random seeds with 95% confidence intervals using service times calibrated directly from the prototype:</p>
+            <ul class="cg-exp-list">
+              <li><strong>E1 — Flash Crowd (500 to 5,000+ users):</strong> Baseline (waiting room OFF) vs. Proposed (waiting room ON) with client timeouts and retries.</li>
+              <li><strong>E2 — Worker Scaling (1, 2, 4 servers):</strong> Utilisation and queue length under peak arrival rates.</li>
+              <li><strong>E3 — Brute-Force &amp; Credential Stuffing:</strong> Lockout effectiveness and zero impact on genuine students.</li>
+            </ul>
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════
+       FOOTER
+  ═══════════════════════════════════════════════════════ -->
+  <footer class="cg-footer">
+    <div class="cg-container cg-footer-inner">
+      <div class="cg-footer-left">
+        <div class="cg-brand">
+          <span class="cg-brand-badge" aria-hidden="true">✓</span>
+          <span class="cg-brand-name">CampusGate</span>
+        </div>
+        <p>Development of a Network Authentication System for Secure Access · B.Sc. Computer Science Project Report, Department of Computer Science, University of Nigeria, Nsukka (July 2026).</p>
+      </div>
+      <div class="cg-footer-right">
+        <p><strong>Authors:</strong> Okechukwu Delight Joseph (2022/245676) &amp; Okeji Victor Obiora (2022/249939)</p>
+        <p><strong>Project Supervisor:</strong> Engr. U. K. Omeh</p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="/public/js/landing.js" defer></script>
+</body>
+</html>
